@@ -7,10 +7,12 @@ import { useRouter, usePathname } from 'next/navigation';
 interface User {
   id: string;
   username: string;
-  roleId: string;
+  roleId: string | null;
   permissions: string[];
-  displayName?: string;
-  email?: string;
+  displayName?: string | null;
+  email?: string | null;
+  roleCode?: string;
+  roleName?: string;
 }
 
 interface AuthContextType {
@@ -64,7 +66,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await authApi.login({ username, password });
     apiClient.setToken(result.accessToken);
     localStorage.setItem('refresh_token', result.refreshToken);
-    setUser(result.user);
+    // 登录后立即获取完整用户信息（含权限列表）
+    const meResult = await authApi.me();
+    setUser(meResult.user);
     router.push('/');
   };
 
@@ -76,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const hasPermission = (permission: string): boolean => {
     if (!user) return false;
-    if (user.roleId === 'admin') return true;
+    if (!user.permissions || user.permissions.length === 0) return false;
     return user.permissions.includes(permission) || user.permissions.includes('*');
   };
 
