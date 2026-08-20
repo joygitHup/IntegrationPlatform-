@@ -29,10 +29,16 @@ export const integrationJobs = sqliteTable(
 
     // 同步模式
     syncMode: text('sync_mode', { length: 16 }).notNull().default('full'), // full / incremental
+    // 增量同步策略
+    watermarkStrategy: text('watermark_strategy', { length: 16 }).default('timestamp'), // id / timestamp / version
     // 增量同步水位字段
     watermarkField: text('watermark_field', { length: 64 }),
     // 当前水位值
     watermarkValue: text('watermark_value', { length: 128 }),
+    // 上一次水位值（断点回退用）
+    lastWatermarkValue: text('last_watermark_value', { length: 128 }),
+    // 最后执行时间
+    lastExecutionAt: integer('last_execution_at', { mode: 'timestamp' }),
 
     // 调度配置
     scheduleType: text('schedule_type', { length: 16 }).notNull().default('cron'), // manual / cron / event / webhook

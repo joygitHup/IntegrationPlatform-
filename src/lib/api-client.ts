@@ -183,3 +183,42 @@ export const auditLogsApi = {
     return apiClient.get<any>(`/audit-logs${query ? `?${query}` : ''}`);
   },
 };
+
+// Connectors API - 获取连接器元数据（类型列表、配置Schema等）
+export const connectorsApi = {
+  list: () => apiClient.get<ConnectorMetadata[]>('/connectors'),
+  get: (type: string) => apiClient.get<ConnectorMetadata>(`/connectors/${type}`),
+};
+
+export interface ConnectorMetadata {
+  type: string;
+  name: string;
+  category: 'database' | 'messaging' | 'api' | 'file' | 'saas';
+  description: string;
+  icon: string;
+  sourceSupported: boolean;
+  targetSupported: boolean;
+  configSchema: {
+    fields: Array<{
+      name: string;
+      label: string;
+      type: string;
+      required?: boolean;
+      defaultValue?: any;
+      placeholder?: string;
+      help?: string;
+      group?: string;
+      options?: Array<{ value: string; label: string }>;
+      sensitive?: boolean;
+      showWhen?: { field: string; value: string };
+    }>;
+  };
+  features: {
+    batchRead: boolean;
+    incrementalRead: boolean;
+    streamingRead: boolean;
+    batchWrite: boolean;
+    transactionalWrite: boolean;
+    upsertSupport: boolean;
+  };
+}

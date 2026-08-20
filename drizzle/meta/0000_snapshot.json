@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c6cee1c2-6215-4613-98e8-e239b7566d19",
+  "id": "0a8469fe-7c64-4adf-88b0-7c11ce9abc5c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "sys_apps": {
@@ -566,6 +566,14 @@
           "autoincrement": false,
           "default": "'full'"
         },
+        "watermark_strategy": {
+          "name": "watermark_strategy",
+          "type": "text(16)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'timestamp'"
+        },
         "watermark_field": {
           "name": "watermark_field",
           "type": "text(64)",
@@ -576,6 +584,20 @@
         "watermark_value": {
           "name": "watermark_value",
           "type": "text(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_watermark_value": {
+          "name": "last_watermark_value",
+          "type": "text(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_execution_at": {
+          "name": "last_execution_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
