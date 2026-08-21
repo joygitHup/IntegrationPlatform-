@@ -25,17 +25,16 @@ export async function GET(request: Request) {
     connectors = connectors.filter(c => c.typeSupport === 'target' || c.typeSupport === 'both');
   }
 
-  return NextResponse.json({
-    total: connectors.length,
-    items: connectors.map(c => ({
-      type: c.type,
-      displayName: c.displayName,
-      category: c.category,
-      icon: c.icon,
-      description: c.description,
-      capabilities: c.capabilities,
-      authMethods: c.authMethods,
-      configSchema: c.configSchema,
-    })),
-  });
+  return NextResponse.json(connectors.map(c => ({
+    type: c.type,
+    displayName: c.displayName,
+    name: c.name,
+    category: c.category,
+    icon: c.icon,
+    description: c.description,
+    typeSupport: c.typeSupport,
+    capabilities: c.capabilities,
+    authMethods: c.authMethods,
+    configSchema: c.configSchema,
+  })));
 }

@@ -102,7 +102,7 @@ export default function DatasourcesPage() {
   const [loading, setLoading] = useState(true);
   const [loadingConnectors, setLoadingConnectors] = useState(true);
   const [keyword, setKeyword] = useState('');
-  const [category, setCategory] = useState('');
+  const [category, setCategory] = useState('__all__');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -135,7 +135,7 @@ export default function DatasourcesPage() {
     setLoading(true);
     try {
       const params: Record<string, any> = { pageSize: 100 };
-      if (category) {
+      if (category && category !== '__all__') {
         const types = connectors.filter(c => c.category === category).map(c => c.type);
         params.types = types.join(',');
       }
@@ -321,7 +321,7 @@ export default function DatasourcesPage() {
                 <SelectValue placeholder="全部类别" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">全部类别</SelectItem>
+                <SelectItem value="__all__">全部类别</SelectItem>
                 {Object.entries(CATEGORY_LABEL).map(([key, label]) => (
                   <SelectItem key={key} value={key}>{label}</SelectItem>
                 ))}
