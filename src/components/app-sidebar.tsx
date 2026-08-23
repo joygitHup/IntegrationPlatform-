@@ -14,6 +14,8 @@ import {
   LogOut,
   ChevronsLeft,
   ChevronsRight,
+  Grid3X3,
+  History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
@@ -29,13 +31,15 @@ interface SidebarItem {
 
 const navItems: SidebarItem[] = [
   { label: '仪表盘', href: '/', icon: LayoutDashboard },
+  { label: '应用门户', href: '/apps', icon: Grid3X3 },
   { label: '数据源管理', href: '/datasources', icon: Database, permission: 'datasource:read' },
   { label: '集成任务', href: '/jobs', icon: GitBranch, permission: 'job:read' },
   { label: '执行监控', href: '/executions', icon: Activity, permission: 'execution:read' },
   { label: '死信队列', href: '/dead-letters', icon: AlertTriangle, permission: 'dlq:read' },
+  { label: '应用管理', href: '/apps/manage', icon: Settings, permission: 'app:read' },
+  { label: '登录日志', href: '/sso-logs', icon: FileText, permission: 'app:read' },
   { label: '用户管理', href: '/users', icon: Users, permission: 'user:read' },
-  { label: '审计日志', href: '/audit-logs', icon: FileText, permission: 'audit:read' },
-  { label: '系统设置', href: '/settings', icon: Settings, permission: '*' },
+  { label: '审计日志', href: '/audit-logs', icon: History, permission: 'audit:read' },
 ];
 
 export function AppSidebar() {

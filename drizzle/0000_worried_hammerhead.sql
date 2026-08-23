@@ -149,6 +149,128 @@ CREATE INDEX `idx_exec_job_id` ON `job_execution` (`job_id`);--> statement-break
 CREATE INDEX `idx_exec_status` ON `job_execution` (`status`);--> statement-breakpoint
 CREATE INDEX `idx_exec_created_at` ON `job_execution` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_exec_job_created` ON `job_execution` (`job_id`,`created_at`);--> statement-breakpoint
+CREATE TABLE `sys_applications` (
+	`id` text PRIMARY KEY NOT NULL,
+	`name` text(128) NOT NULL,
+	`code` text(64) NOT NULL,
+	`description` text(500),
+	`icon` text(255),
+	`category` text(32) DEFAULT 'business' NOT NULL,
+	`login_type` text(32) DEFAULT 'jwt' NOT NULL,
+	`login_url` text(500),
+	`logout_url` text(500),
+	`callback_url` text(500),
+	`secret_key` text(500),
+	`settings` text DEFAULT '{}',
+	`jwt_algorithm` text(16) DEFAULT 'HS256',
+	`jwt_expires_in` integer DEFAULT 30 NOT NULL,
+	`ticket_expires_in` integer DEFAULT 60 NOT NULL,
+	`oauth_client_id` text(255),
+	`oauth_client_secret` text(500),
+	`oauth_auth_url` text(500),
+	`oauth_token_url` text(500),
+	`oauth_userinfo_url` text(500),
+	`oauth_scope` text(255),
+	`saml_idp_metadata_url` text(500),
+	`saml_sp_entity_id` text(255),
+	`saml_cert` text(2000),
+	`account_mapping` text(32) DEFAULT 'same_username' NOT NULL,
+	`mapping_attribute` text(64),
+	`ip_whitelist_enabled` integer DEFAULT false NOT NULL,
+	`ip_whitelist` text DEFAULT '[]',
+	`require_mfa` integer DEFAULT false NOT NULL,
+	`sort_order` integer DEFAULT 0 NOT NULL,
+	`visible` integer DEFAULT true NOT NULL,
+	`status` text(16) DEFAULT 'active' NOT NULL,
+	`created_by` text(32),
+	`created_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL,
+	`updated_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `sys_applications_code_unique` ON `sys_applications` (`code`);--> statement-breakpoint
+CREATE INDEX `idx_apps_code` ON `sys_applications` (`code`);--> statement-breakpoint
+CREATE INDEX `idx_apps_category` ON `sys_applications` (`category`);--> statement-breakpoint
+CREATE INDEX `idx_apps_status` ON `sys_applications` (`status`);--> statement-breakpoint
+CREATE TABLE `sys_sso_audit_logs` (
+	`id` text PRIMARY KEY NOT NULL,
+	`app_id` text(32),
+	`app_name` text(128),
+	`user_id` text(32),
+	`username` text(64),
+	`event_type` text(32) NOT NULL,
+	`login_type` text(32),
+	`result` text(16) NOT NULL,
+	`failure_reason` text(255),
+	`detail` text DEFAULT '{}',
+	`ip` text(64),
+	`user_agent` text(500),
+	`session_id` text(64),
+	`created_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_sso_audit_app` ON `sys_sso_audit_logs` (`app_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_audit_user` ON `sys_sso_audit_logs` (`user_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_audit_event` ON `sys_sso_audit_logs` (`event_type`);--> statement-breakpoint
+CREATE INDEX `idx_sso_audit_created` ON `sys_sso_audit_logs` (`created_at`);--> statement-breakpoint
+CREATE TABLE `sys_sso_sessions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`session_id` text(64) NOT NULL,
+	`app_id` text(32) NOT NULL,
+	`user_id` text(32) NOT NULL,
+	`username` text(64),
+	`login_type` text(32) NOT NULL,
+	`external_session_id` text(500),
+	`status` text(16) DEFAULT 'active' NOT NULL,
+	`login_at` integer NOT NULL,
+	`expires_at` integer,
+	`logout_at` integer,
+	`ip` text(64),
+	`user_agent` text(500),
+	`logout_type` text(32),
+	`logout_reason` text(255),
+	`created_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `sys_sso_sessions_session_id_unique` ON `sys_sso_sessions` (`session_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_session` ON `sys_sso_sessions` (`session_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_session_app_user` ON `sys_sso_sessions` (`app_id`,`user_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_session_status` ON `sys_sso_sessions` (`status`);--> statement-breakpoint
+CREATE INDEX `idx_sso_login_at` ON `sys_sso_sessions` (`login_at`);--> statement-breakpoint
+CREATE TABLE `sys_sso_tickets` (
+	`id` text PRIMARY KEY NOT NULL,
+	`ticket` text(64) NOT NULL,
+	`app_id` text(32) NOT NULL,
+	`user_id` text(32) NOT NULL,
+	`user_info` text DEFAULT '{}',
+	`status` text(16) DEFAULT 'pending' NOT NULL,
+	`expires_at` integer NOT NULL,
+	`used_at` integer,
+	`ip` text(64),
+	`user_agent` text(500),
+	`consumed_ip` text(64),
+	`created_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `sys_sso_tickets_ticket_unique` ON `sys_sso_tickets` (`ticket`);--> statement-breakpoint
+CREATE INDEX `idx_sso_ticket` ON `sys_sso_tickets` (`ticket`);--> statement-breakpoint
+CREATE INDEX `idx_sso_app_user` ON `sys_sso_tickets` (`app_id`,`user_id`);--> statement-breakpoint
+CREATE INDEX `idx_sso_expires` ON `sys_sso_tickets` (`expires_at`);--> statement-breakpoint
+CREATE TABLE `sys_user_app_bindings` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text(32) NOT NULL,
+	`app_id` text(32) NOT NULL,
+	`external_user_id` text(128),
+	`external_username` text(128),
+	`encrypted_credentials` text(2000),
+	`status` text(16) DEFAULT 'active' NOT NULL,
+	`last_login_at` integer,
+	`login_count` integer DEFAULT 0 NOT NULL,
+	`created_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL,
+	`updated_at` integer DEFAULT (cast((julianday('now') - 2440587.5)*86400000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_user_app` ON `sys_user_app_bindings` (`user_id`,`app_id`);--> statement-breakpoint
+CREATE INDEX `idx_binding_app` ON `sys_user_app_bindings` (`app_id`);--> statement-breakpoint
 CREATE TABLE `sys_audit_log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text(32),

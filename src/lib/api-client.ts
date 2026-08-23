@@ -222,3 +222,50 @@ export interface ConnectorMetadata {
     upsertSupport: boolean;
   };
 }
+
+// Applications API
+export const appsApi = {
+  list: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/apps${query ? `?${query}` : ''}`);
+  },
+  get: (id: string) => apiClient.get<any>(`/apps/${id}`),
+  create: (data: any) => apiClient.post<any>('/apps', data),
+  update: (id: string, data: any) => apiClient.put<any>(`/apps/${id}`, data),
+  delete: (id: string) => apiClient.delete<any>(`/apps/${id}`),
+  my: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/apps/my${query ? `?${query}` : ''}`);
+  },
+  bindings: {
+    list: (params?: Record<string, any>) => {
+      const query = new URLSearchParams(params as any).toString();
+      return apiClient.get<any>(`/apps/bindings${query ? `?${query}` : ''}`);
+    },
+    create: (data: any) => apiClient.post<any>('/apps/bindings', data),
+    update: (id: string, data: any) => apiClient.put<any>(`/apps/bindings?id=${id}`, data),
+    delete: (id: string) => apiClient.delete<any>(`/apps/bindings?id=${id}`),
+  },
+  ssoLogin: (appId: string, redirectUrl?: string) =>
+    apiClient.post<any>('/sso/login', { appId, redirectUrl }),
+};
+
+// SSO Logs API
+export const ssoLogsApi = {
+  list: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/sso/logs${query ? `?${query}` : ''}`);
+  },
+};
+
+// SSO Sessions API
+export const ssoSessionsApi = {
+  list: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/sso/sessions${query ? `?${query}` : ''}`);
+  },
+  revoke: (sessionId: string) =>
+    apiClient.delete<any>(`/sso/sessions?sessionId=${sessionId}`),
+  revokeAll: () =>
+    apiClient.delete<any>('/sso/sessions?all=true'),
+};

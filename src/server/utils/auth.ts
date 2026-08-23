@@ -7,6 +7,8 @@ import { eq } from 'drizzle-orm';
 export interface AuthContext {
   userId: string;
   username: string;
+  email?: string | null;
+  displayName?: string | null;
   roleId: string;
   roleCode: string;
   permissions: string[];
@@ -74,6 +76,8 @@ export async function authenticate(request: NextRequest): Promise<AuthContext | 
   return {
     userId: user.id,
     username: user.username,
+    email: user.email,
+    displayName: user.displayName,
     roleId: user.roleId || '',
     roleCode,
     permissions,

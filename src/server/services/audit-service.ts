@@ -6,7 +6,7 @@ export interface AuditLogInput {
   userId?: string;
   username?: string;
   action: 'LOGIN' | 'LOGOUT' | 'CREATE' | 'UPDATE' | 'DELETE' | 'EXECUTE' | 'APPROVE';
-  resourceType?: 'JOB' | 'DATASOURCE' | 'USER' | 'APP' | 'ROLE' | 'SETTING';
+  resourceType?: 'JOB' | 'DATASOURCE' | 'USER' | 'APP' | 'ROLE' | 'SETTING' | 'SSO_LOGIN' | 'SSO_SESSION' | 'APP_BINDING';
   resourceId?: string;
   resourceName?: string;
   detail?: Record<string, unknown>;

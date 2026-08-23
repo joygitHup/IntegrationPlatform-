@@ -1,5 +1,5 @@
 import { db } from './db';
-import { users, roles, rolePermissions } from './db/schema';
+import { users, roles, rolePermissions, applications } from './db/schema';
 import { hashPassword } from './utils/password';
 import { generateId } from './utils/id';
 import { eq } from 'drizzle-orm';
@@ -65,6 +65,8 @@ export async function seedSystem() {
       'deadletter:read', 'deadletter:retry', 'deadletter:delete',
       'audit:read',
       'system:read', 'system:write',
+      'app:read', 'app:write', 'app:delete',
+      'sso:audit', 'sso:manage',
     ];
 
     const buildPermissions = (roleId: string, perms: string[]) =>
@@ -97,6 +99,7 @@ export async function seedSystem() {
         'execution:read',
         'deadletter:read',
         'audit:read',
+        'app:read',
       ]),
     ]);
 
@@ -114,7 +117,89 @@ export async function seedSystem() {
       status: 'active',
     });
 
-    console.log('[Seed] 系统初始化完成');
+    // 5. 创建示例应用（SSO 单点登录）
+    const sampleApps = [
+      {
+        name: '企业邮箱',
+        code: 'email',
+        description: '企业邮箱系统单点登录',
+        icon: '📧',
+        category: 'business',
+        loginType: 'jwt',
+        loginUrl: 'https://mail.example.com/sso/login',
+        logoutUrl: 'https://mail.example.com/logout',
+        sortOrder: 1,
+      },
+      {
+        name: 'OA 办公系统',
+        code: 'oa',
+        description: '企业 OA 协同办公平台',
+        icon: '💼',
+        category: 'business',
+        loginType: 'ticket',
+        loginUrl: 'https://oa.example.com/sso/ticket',
+        sortOrder: 2,
+      },
+      {
+        name: 'CRM 客户管理',
+        code: 'crm',
+        description: '客户关系管理系统',
+        icon: '👥',
+        category: 'business',
+        loginType: 'oauth2',
+        loginUrl: 'https://crm.example.com/oauth/authorize',
+        oauthClientId: 'integration-platform',
+        oauthAuthUrl: 'https://crm.example.com/oauth/authorize',
+        oauthTokenUrl: 'https://crm.example.com/oauth/token',
+        oauthUserInfoUrl: 'https://crm.example.com/api/userinfo',
+        sortOrder: 3,
+      },
+      {
+        name: '数据报表平台',
+        code: 'bi',
+        description: 'BI 数据可视化报表',
+        icon: '📊',
+        category: 'data',
+        loginType: 'jwt',
+        loginUrl: 'https://bi.example.com/api/sso/jwt',
+        sortOrder: 10,
+      },
+      {
+        name: '文档知识库',
+        code: 'wiki',
+        description: '企业文档与知识管理',
+        icon: '📚',
+        category: 'business',
+        loginType: 'ticket',
+        loginUrl: 'https://wiki.example.com/sso',
+        sortOrder: 4,
+      },
+      {
+        name: '代码仓库',
+        code: 'gitlab',
+        description: 'GitLab 代码托管平台',
+        icon: '🔧',
+        category: 'devops',
+        loginType: 'oauth2',
+        loginUrl: 'https://gitlab.example.com/oauth/authorize',
+        oauthClientId: 'integration-platform',
+        oauthAuthUrl: 'https://gitlab.example.com/oauth/authorize',
+        oauthTokenUrl: 'https://gitlab.example.com/oauth/token',
+        oauthUserInfoUrl: 'https://gitlab.example.com/api/v4/user',
+        sortOrder: 20,
+      },
+    ];
+
+    const appValues = sampleApps.map(app => ({
+      id: generateId('app'),
+      ...app,
+      secretKey: 'sso-demo-secret-key-please-change-in-production',
+      status: 'active' as const,
+      createdBy: adminUserId,
+    }));
+
+    await db.insert(applications).values(appValues);
+    console.log(`[Seed] 已创建 ${sampleApps.length} 个示例应用`);
     console.log('[Seed] 默认管理员账号: admin / admin123');
     console.log('[Seed] 请登录后立即修改默认密码!');
 
