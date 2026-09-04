@@ -12,6 +12,13 @@ import { integrationJobs } from '@/server/db/schema/integration-job';
 import { generateId } from '@/server/utils/id';
 import { transformBatch } from '@/server/services/field-mapping-engine';
 import { getDatasourceById } from '@/server/services/datasource-service';
+import { desensitizeRecord, computeDataFingerprint, type DesensitizeMode } from '@/server/services/desensitize-service';
+import {
+  makeSyncDecision,
+  type SyncDecision,
+} from '@/server/services/sync-engine';
+import { createSnapshot } from '@/server/services/version-snapshot-service';
+import { recordFieldChangeAudit } from '@/server/services/field-audit-service';
 import { eq } from 'drizzle-orm';
 import type { JobData, JobResult } from './index';
 
@@ -66,7 +73,7 @@ export async function updateExecutionStatus(
 }
 
 // ============================================================
-// 写入死信队列
+// 写入死信队列（自动脱敏）
 // ============================================================
 export async function addToDeadLetter(params: {
   jobId: string;
@@ -74,18 +81,77 @@ export async function addToDeadLetter(params: {
   payload: Record<string, unknown>;
   errorMessage: string;
   errorType?: string;
+  sensitiveFields?: string[];
+  desensitizeMode?: DesensitizeMode;
 }) {
   const db = getDb();
+
+  // 敏感字段脱敏
+  const desensitizedPayload = params.sensitiveFields && params.sensitiveFields.length > 0
+    ? desensitizeRecord(params.payload, params.sensitiveFields, params.desensitizeMode || 'mask')
+    : params.payload;
+
+  const isDesensitized = !!(params.sensitiveFields && params.sensitiveFields.length > 0);
+  const payloadHash = computeDataFingerprint(params.payload);
+
   await db.insert(deadLetterMessages).values({
     id: generateId('dlq'),
     jobId: params.jobId,
     executionId: params.executionId,
-    payload: params.payload,
+    payload: desensitizedPayload,
+    isDesensitized,
+    payloadHash,
     errorMessage: params.errorMessage,
     errorType: params.errorType || 'TRANSFORM_ERROR',
     retryCount: 0,
     status: 'pending',
   });
+}
+
+// ============================================================
+// 构建记录匹配键
+// ============================================================
+function buildRecordKey(record: Record<string, unknown>, matchKeys: string[]): string {
+  if (matchKeys.length === 0) return JSON.stringify(record);
+  return matchKeys.map((k) => String(record[k] ?? '')).join('||');
+}
+
+// ============================================================
+// 构建更新 URL（REST 风格）
+// ============================================================
+function buildUpdateUrl(baseUrl: string, record: Record<string, unknown>, matchKeys: string[]): string {
+  const firstKey = matchKeys[0] || 'id';
+  const id = String(record[firstKey] || '');
+  const sep = baseUrl.endsWith('/') ? '' : '/';
+  return `${baseUrl}${sep}${encodeURIComponent(id)}`;
+}
+
+// ============================================================
+// 预取目标系统数据用于 upsert 对比
+// ============================================================
+async function fetchTargetDataForUpsert(
+  targetUrl: string,
+  targetHeaders: Record<string, string>,
+  _sourceRecords: Record<string, unknown>[],
+  matchKeys: string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const map = new Map<string, Record<string, unknown>>();
+  try {
+    const listUrl = new URL(targetUrl);
+    listUrl.searchParams.set('pageSize', '1000');
+    const res = await fetch(listUrl.toString(), { method: 'GET', headers: targetHeaders });
+    if (!res.ok) return map;
+    const data = await res.json() as Record<string, unknown>;
+    let targetRecords: Record<string, unknown>[] = [];
+    if (Array.isArray(data)) targetRecords = data;
+    else if (Array.isArray(data.data)) targetRecords = data.data as Record<string, unknown>[];
+    else if (Array.isArray(data.items)) targetRecords = data.items as Record<string, unknown>[];
+    for (const rec of targetRecords) {
+      const key = buildRecordKey(rec, matchKeys);
+      map.set(key, rec);
+    }
+  } catch (_e) { /* 获取失败退化为 insert 模式 */ }
+  return map;
 }
 
 // ============================================================
@@ -128,7 +194,7 @@ export async function executeJob(data: JobData): Promise<JobResult> {
     }
 
     // 4. 根据数据源类型执行 ETL
-    let result: { totalRows: number; successRows: number; failedRows: number; lastWatermark?: string };
+    let result: { totalRows: number; successRows: number; failedRows: number; skippedRows?: number; lastWatermark?: string };
 
     if (sourceDs.type === 'http_api' && targetDs.type === 'http_api') {
       result = await executeHttpToHttp(job, sourceDs.config as Record<string, unknown>, targetDs.config as Record<string, unknown>);
@@ -192,7 +258,7 @@ async function executeHttpToHttp(
   job: typeof integrationJobs.$inferSelect,
   sourceConfig: Record<string, unknown>,
   targetConfig: Record<string, unknown>,
-): Promise<{ totalRows: number; successRows: number; failedRows: number; lastWatermark?: string }> {
+): Promise<{ totalRows: number; successRows: number; failedRows: number; skippedRows?: number; lastWatermark?: string }> {
   const sourceCfg = sourceConfig as { baseUrl: string; path?: string; authType?: string; token?: string; dataField?: string };
   const targetCfg = targetConfig as { baseUrl: string; path?: string; authType?: string; token?: string; method?: string };
 
@@ -235,13 +301,37 @@ async function executeHttpToHttp(
   const totalRows = records.length;
   let successRows = 0;
   let failedRows = 0;
+  let skippedRows = 0;
   let lastWatermark: string | undefined;
+
+  // 读取增强配置
+  const matchKeys = (job.matchKeys as string[]) || [];
+  const conflictStrategy = (job.conflictStrategy as string) || 'source_wins';
+  const sensitiveFields = (job.sensitiveFields as string[]) || [];
+  const desensitizeMode = (job.desensitizeMode as DesensitizeMode) || 'mask';
+  const enableChangeAudit = !!job.enableChangeAudit;
+  const enableVersionSnapshot = !!job.enableVersionSnapshot;
+
+  // 版本快照 - 执行前（如果启用）
+  if (enableVersionSnapshot) {
+    try {
+      await createSnapshot({
+        jobId: job.id,
+        executionId: '',
+        snapshotType: 'before',
+        data: records,
+        retentionDays: job.versionRetentionDays || 30,
+      });
+    } catch (_e) {
+      // 快照失败不影响主流程
+    }
+  }
 
   // 2. 字段映射
   const { success: mappedRecords, failed: transformFailed } = transformBatch(records, job.fieldMapping || []);
   failedRows += transformFailed.length;
 
-  // 记录转换失败的数据到 DLQ
+  // 记录转换失败的数据到 DLQ（自动脱敏）
   for (const failed of transformFailed) {
     await addToDeadLetter({
       jobId: job.id,
@@ -249,71 +339,167 @@ async function executeHttpToHttp(
       payload: failed.record,
       errorMessage: failed.error,
       errorType: 'TRANSFORM_ERROR',
+      sensitiveFields,
+      desensitizeMode,
     });
   }
 
-  // 3. 写入目标 API
+  // 3. 同步决策与写入目标
   const targetUrl = buildUrl(targetCfg.baseUrl, targetCfg.path || '');
   const targetHeaders = {
     ...buildApiHeaders(targetCfg),
     'Content-Type': 'application/json',
   };
   const targetMethod = (targetCfg.method as string) || 'POST';
+  const writeMode = (job.writeMode as string) || 'insert';
+
+  // 预取目标数据（用于 upsert 模式时的对比）
+  let targetDataMap = new Map<string, Record<string, unknown>>();
+  if (writeMode !== 'insert' && matchKeys.length > 0) {
+    targetDataMap = await fetchTargetDataForUpsert(
+      targetUrl, targetHeaders, mappedRecords, matchKeys,
+    );
+  }
+
+  // 映射源记录到目标索引（通过 matchKeys 对应）
+  const sourceKeyToRecord = new Map<string, { source: Record<string, unknown>; mapped: Record<string, unknown> }>();
+  for (let i = 0; i < records.length; i++) {
+    if (mappedRecords[i]) {
+      const key = buildRecordKey(mappedRecords[i], matchKeys);
+      sourceKeyToRecord.set(key, { source: records[i], mapped: mappedRecords[i] });
+    }
+  }
 
   // 批次写入
   const batchSize = job.batchSize || 100;
   for (let i = 0; i < mappedRecords.length; i += batchSize) {
     const batch = mappedRecords.slice(i, i + batchSize);
-    try {
-      // 单条写入更可靠
-      for (const record of batch) {
-        try {
-          const writeRes = await fetch(targetUrl, {
-            method: targetMethod,
-            headers: targetHeaders,
-            body: JSON.stringify(record),
-          });
-          if (writeRes.ok) {
-            successRows++;
-            // 更新水位
-            if (job.syncMode === 'incremental' && job.watermarkField) {
-              // 从原始记录找水位字段值（通过 source 数据匹配）
-              const originalIdx = records.findIndex((r) => JSON.stringify(r).slice(0, 100) === JSON.stringify(record).slice(0, 100));
-              if (originalIdx >= 0) {
-                const wmVal = String(records[originalIdx][job.watermarkField!] || '');
-                if (!lastWatermark || wmVal > lastWatermark) {
-                  lastWatermark = wmVal;
-                }
-              }
+    for (const record of batch) {
+      try {
+        const recordKey = buildRecordKey(record, matchKeys);
+        const targetRecord = targetDataMap.get(recordKey);
+        const sourceRec = sourceKeyToRecord.get(recordKey)?.source || record;
+
+        // 同步决策
+        const decision = makeSyncDecision({
+          jobId: job.id,
+          executionId: '',
+          sourceRecord: record,
+          targetRecord,
+          matchKeys,
+          conflictStrategy: conflictStrategy as 'source_wins' | 'target_wins' | 'newest_wins' | 'manual',
+          conflictCompareField: job.conflictCompareField || undefined,
+          enableChangeAudit,
+        });
+
+        // 根据决策执行操作
+        let writeSuccess = false;
+
+        switch (decision.operation) {
+          case 'create': {
+            if (writeMode === 'update_only') {
+              skippedRows++;
+              break;
             }
-          } else {
-            failedRows++;
-            const errText = await writeRes.text().catch(() => '');
-            await addToDeadLetter({
-              jobId: job.id,
-              executionId: '',
-              payload: record,
-              errorMessage: `写入失败: HTTP ${writeRes.status} ${errText}`,
-              errorType: 'WRITE_ERROR',
+            // 写入创建请求
+            const createRes = await fetch(targetUrl, {
+              method: targetMethod,
+              headers: targetHeaders,
+              body: JSON.stringify(record),
             });
+            writeSuccess = createRes.ok;
+
+            if (!writeSuccess) {
+              const errText = await createRes.text().catch(() => '');
+              throw new Error(`创建失败: HTTP ${createRes.status} ${errText}`);
+            }
+
+            // 变更审计
+            if (enableChangeAudit) {
+              await recordFieldChangeAudit({
+                jobId: job.id,
+                executionId: '',
+                recordKey,
+                operation: 'create',
+                changes: Object.keys(record).map((f) => ({ field: f, oldValue: null, newValue: record[f] })),
+                beforeRecord: null,
+                afterRecord: record,
+              }).catch(() => {}); // 审计失败不影响主流程
+            }
+            break;
           }
-        } catch (writeError) {
-          failedRows++;
-          await addToDeadLetter({
-            jobId: job.id,
-            executionId: '',
-            payload: record,
-            errorMessage: `写入异常: ${(writeError as Error).message}`,
-            errorType: 'WRITE_ERROR',
-          });
+
+          case 'update': {
+            if (writeMode === 'insert') {
+              // insert 模式遇到已存在 → 跳过（不覆盖）
+              skippedRows++;
+              break;
+            }
+
+            // 构建更新 URL（假设 REST 风格，通过 match key 追加到 path）
+            const updateUrl = buildUpdateUrl(targetUrl, record, matchKeys);
+            const updateRes = await fetch(updateUrl, {
+              method: 'PUT',
+              headers: targetHeaders,
+              body: JSON.stringify(record),
+            });
+            writeSuccess = updateRes.ok;
+
+            if (!writeSuccess) {
+              const errText = await updateRes.text().catch(() => '');
+              throw new Error(`更新失败: HTTP ${updateRes.status} ${errText}`);
+            }
+
+            // 变更审计
+            if (enableChangeAudit && decision.changedFields && decision.changedFields.length > 0) {
+              await recordFieldChangeAudit({
+                jobId: job.id,
+                executionId: '',
+                recordKey,
+                operation: 'update',
+                changes: decision.changedFields,
+                beforeRecord: targetRecord ?? null,
+                afterRecord: record,
+              }).catch(() => {});
+            }
+            break;
+          }
+
+          case 'skip_identical':
+          case 'skip_conflict': {
+            skippedRows++;
+            break;
+          }
         }
+
+        if (decision.operation === 'create' || decision.operation === 'update') {
+          successRows++;
+        }
+
+        // 更新水位
+        if (decision.operation !== 'skip_conflict' && job.syncMode === 'incremental' && job.watermarkField) {
+          const wmVal = String(sourceRec[job.watermarkField] || '');
+          if (!lastWatermark || wmVal > lastWatermark) {
+            lastWatermark = wmVal;
+          }
+        }
+
+      } catch (writeError) {
+        failedRows++;
+        await addToDeadLetter({
+          jobId: job.id,
+          executionId: '',
+          payload: record,
+          errorMessage: `写入异常: ${(writeError as Error).message}`,
+          errorType: 'WRITE_ERROR',
+          sensitiveFields,
+          desensitizeMode,
+        });
       }
-    } catch (batchError) {
-      failedRows += batch.length;
     }
   }
 
-  return { totalRows, successRows, failedRows, lastWatermark };
+  return { totalRows, successRows, failedRows, skippedRows, lastWatermark };
 }
 
 // ============================================================
@@ -323,7 +509,7 @@ async function executeHttpExtract(
   job: typeof integrationJobs.$inferSelect,
   sourceConfig: Record<string, unknown>,
   _targetDs: { type: string; config: Record<string, unknown> },
-): Promise<{ totalRows: number; successRows: number; failedRows: number; lastWatermark?: string }> {
+): Promise<{ totalRows: number; successRows: number; failedRows: number; skippedRows?: number; lastWatermark?: string }> {
   // 简化处理：对于非 HTTP 目标，模拟执行（实际生产环境需要对应目标的 writer）
   return executeMockETL(job);
 }
@@ -333,7 +519,7 @@ async function executeHttpExtract(
 // ============================================================
 async function executeMockETL(
   job: typeof integrationJobs.$inferSelect,
-): Promise<{ totalRows: number; successRows: number; failedRows: number; lastWatermark?: string }> {
+): Promise<{ totalRows: number; successRows: number; failedRows: number; skippedRows?: number; lastWatermark?: string }> {
   // 模拟一批数据
   const batchSize = Math.min(job.batchSize, 50);
   const records: Record<string, unknown>[] = [];

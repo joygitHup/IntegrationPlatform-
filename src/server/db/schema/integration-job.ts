@@ -52,6 +52,37 @@ export const integrationJobs = sqliteTable(
     // 失败重试间隔(秒)
     retryInterval: integer('retry_interval').notNull().default(60),
 
+    // === 去重与 Upsert 模式 ===
+    // 写入模式：insert / upsert / update_only
+    writeMode: text('write_mode', { length: 16 }).notNull().default('insert'),
+    // 匹配键（用于 upsert 时查找记录，如 username, employee_id）
+    matchKeys: text('match_keys', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    // 冲突解决策略
+    // source_wins: 源数据优先覆盖 | target_wins: 保留目标数据 | newest_wins: 按更新时间比较 | manual: 人工介入
+    conflictStrategy: text('conflict_strategy', { length: 20 }).notNull().default('source_wins'),
+    // 冲突比较字段（newest_wins 模式下使用，如 updated_at）
+    conflictCompareField: text('conflict_compare_field', { length: 64 }),
+
+    // === 敏感字段配置 ===
+    // 敏感字段列表（死信队列存储时自动脱敏）
+    sensitiveFields: text('sensitive_fields', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    // 脱敏方式：mask（掩码）/ hash（哈希）/ remove（移除）
+    desensitizeMode: text('desensitize_mode', { length: 12 }).notNull().default('mask'),
+
+    // === 变更审计 ===
+    // 是否启用字段级变更审计
+    enableChangeAudit: integer('enable_change_audit', { mode: 'boolean' }).notNull().default(false),
+
+    // === 版本快照（回滚用） ===
+    // 是否启用版本快照
+    enableVersionSnapshot: integer('enable_version_snapshot', { mode: 'boolean' }).notNull().default(false),
+    // 版本保留天数
+    versionRetentionDays: integer('version_retention_days').notNull().default(30),
+
+    // === 同步模板 ===
+    // 任务模板类型：user_sync / dept_sync / generic
+    templateType: text('template_type', { length: 20 }).notNull().default('generic'),
+
     // 任务状态
     status: text('status', { length: 16 }).notNull().default('stopped'), // running / stopped / paused / error
 

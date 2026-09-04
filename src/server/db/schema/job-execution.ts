@@ -62,8 +62,12 @@ export const deadLetterMessages = sqliteTable(
     jobId: text('job_id', { length: 32 }).notNull(),
     executionId: text('execution_id', { length: 32 }).notNull(),
 
-    // 原始数据（JSON）
+    // 原始数据（JSON，已脱敏）
     payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    // 是否已脱敏
+    isDesensitized: integer('is_desensitized', { mode: 'boolean' }).notNull().default(false),
+    // 原始 payload 哈希（用于去重和追溯，不存明文）
+    payloadHash: text('payload_hash', { length: 64 }),
 
     // 错误信息
     errorMessage: text('error_message', { length: 2000 }),
@@ -93,3 +97,80 @@ export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
 export type DeadLetterMessage = typeof deadLetterMessages.$inferSelect;
 export type NewDeadLetterMessage = typeof deadLetterMessages.$inferInsert;
+
+// ============================================================
+// 字段级变更审计表
+// ============================================================
+export const fieldChangeAudits = sqliteTable(
+  'field_change_audit',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id', { length: 32 }).notNull(),
+    executionId: text('execution_id', { length: 32 }).notNull(),
+
+    // 匹配键值（唯一标识某条记录）
+    recordKey: text('record_key', { length: 256 }).notNull(),
+    // 操作类型：create / update / delete / skip_conflict
+    operation: text('operation', { length: 16 }).notNull(),
+
+    // 变更字段列表（JSON：[{ field, oldValue, newValue }]）
+    changes: text('changes', { mode: 'json' }).$type<FieldChange[]>().notNull().default([]),
+
+    // 变更前后数据快照的哈希（不存明文）
+    beforeHash: text('before_hash', { length: 64 }),
+    afterHash: text('after_hash', { length: 64 }),
+
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    idxJobId: index('idx_fca_job_id').on(table.jobId),
+    idxExecutionId: index('idx_fca_exec_id').on(table.executionId),
+    idxRecordKey: index('idx_fca_record_key').on(table.recordKey),
+    idxOperation: index('idx_fca_operation').on(table.operation),
+  }),
+);
+
+export interface FieldChange {
+  field: string;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
+export type FieldChangeAudit = typeof fieldChangeAudits.$inferSelect;
+export type NewFieldChangeAudit = typeof fieldChangeAudits.$inferInsert;
+
+// ============================================================
+// 数据版本快照表（回滚用）
+// ============================================================
+export const dataVersionSnapshots = sqliteTable(
+  'data_version_snapshot',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id', { length: 32 }).notNull(),
+    executionId: text('execution_id', { length: 32 }).notNull(),
+
+    // 版本号
+    version: integer('version').notNull().default(1),
+    // 快照类型：before / after
+    snapshotType: text('snapshot_type', { length: 8 }).notNull(), // before / after
+
+    // 记录总数
+    recordCount: integer('record_count').notNull().default(0),
+    // 快照数据存储路径（大数据量存文件，小数据量直接存数据库）
+    // 对于 SQLite 开发环境，直接存 JSON
+    snapshotData: text('snapshot_data', { mode: 'json' }).$type<Record<string, unknown>[]>().notNull().default([]),
+
+    // 过期时间（TTL）
+    expiresAt: integer('expires_at', { mode: 'timestamp' }),
+
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().defaultNow(),
+  },
+  (table) => ({
+    idxJobVersion: index('idx_dvs_job_version').on(table.jobId, table.version),
+    idxExecutionId: index('idx_dvs_exec_id').on(table.executionId),
+    idxExpiresAt: index('idx_dvs_expires_at').on(table.expiresAt),
+  }),
+);
+
+export type DataVersionSnapshot = typeof dataVersionSnapshots.$inferSelect;
+export type NewDataVersionSnapshot = typeof dataVersionSnapshots.$inferInsert;
