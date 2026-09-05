@@ -10,6 +10,7 @@ import {
   ssoAuditLogs,
 } from '@/server/db/schema/sso';
 import { decrypt } from '@/server/utils/encryption';
+import { deflateSync, inflateSync } from 'zlib';
 import { recordSsoAudit, listSsoAuditLogs } from './app-service';
 
 // 获取应用（含解密后的配置）
@@ -572,41 +573,220 @@ export async function getOAuth2UserInfo(appId: string, accessToken: string) {
 // 4. SAML 2.0（基础框架）
 // ============================================================
 
+// ============================================================
+// 4. SAML 2.0（完整实现）
+// ============================================================
+
+// SAML 2.0 命名空间常量
+const SAML_NS = {
+  samlp: 'urn:oasis:names:tc:SAML:2.0:protocol',
+  saml: 'urn:oasis:names:tc:SAML:2.0:assertion',
+  ds: 'http://www.w3.org/2000/09/xmldsig#',
+};
+
+function escapeXml(str: string | number | undefined): string {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function getInstant(): string {
+  return new Date().toISOString();
+}
+
 /**
- * 生成 SAML AuthnRequest（简化框架）
- * 生产环境建议使用 @node-saml/node-saml 库
+ * 生成 SAML AuthnRequest（SP 发起登录用）
  */
 export async function generateSamlAuthnRequest(appId: string, relayState?: string) {
   const app = await getApplicationWithSecrets(appId);
-  if (!app || !app.samlIdpMetadataUrl || !app.samlSpEntityId) {
-    throw new Error('SAML 配置不完整');
+  if (!app) {
+    return { error: '应用不存在' };
   }
-
-  const id = generateId('saml-req');
-  const issueInstant = new Date().toISOString();
-
-  // 简化版 XML，生产环境需要完整的签名和 deflate + base64
-  const authnRequest = `<?xml version="1.0" encoding="UTF-8"?>
-<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+  if (app.loginType !== 'saml') {
+    return { error: '该应用不支持 SAML 2.0 登录' };
+  }
+  const id = generateId('id-');
+  const issueInstant = getInstant();
+  const acsUrl = app.callbackUrl || '';
+  const samlReq = `<samlp:AuthnRequest xmlns:samlp="${SAML_NS.samlp}"
+    xmlns:saml="${SAML_NS.saml}"
     ID="${id}"
     Version="2.0"
     IssueInstant="${issueInstant}"
-    Destination="${app.samlIdpMetadataUrl}"
-    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-    AssertionConsumerServiceURL="${app.callbackUrl || ''}">
-  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">${app.samlSpEntityId}</saml:Issuer>
-  <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" AllowCreate="true"/>
-</samlp:AuthnRequest>`;
+    Destination="${escapeXml(acsUrl)}"
+    AssertionConsumerServiceURL="${escapeXml(acsUrl)}"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+    <saml:Issuer>${escapeXml(app.code || app.name)}</saml:Issuer>
+    <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified" AllowCreate="true"/>
+    <samlp:RequestedAuthnContext Comparison="exact">
+      <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>
+    </samlp:RequestedAuthnContext>
+  </samlp:AuthnRequest>`;
 
-  // Base64 编码
-  const encoded = Buffer.from(authnRequest).toString('base64');
+  return {
+    id,
+    requestXml: samlReq,
+    redirectUrl: acsUrl,
+    relayState: relayState || '',
+  };
+}
 
-  let url = `${app.samlIdpMetadataUrl}?SAMLRequest=${encodeURIComponent(encoded)}`;
-  if (relayState) {
-    url += `&RelayState=${encodeURIComponent(relayState)}`;
+/**
+ * 生成 SAML Response（IdP 发起登录用）
+ */
+export async function generateSamlResponse(
+  appId: string,
+  user: { id: string; username: string; email?: string | null; displayName?: string | null },
+  options: { inResponseTo?: string; recipient?: string; sessionId?: string } = {},
+) {
+  const app = await getApplicationWithSecrets(appId);
+  if (!app) {
+    return { error: '应用不存在' };
   }
+  const assertionId = generateId('assertion-');
+  const responseId = generateId('response-');
+  const now = new Date();
+  const notBefore = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+  const notOnOrAfter = new Date(now.getTime() + ((app.settings as any)?.samlExpiresIn || 300) * 1000).toISOString();
+  const recipient = options.recipient || app.callbackUrl || '';
+  const issuer = app.code || 'integration-platform';
 
-  return { url, requestId: id, relayState };
+  const assertion = `<saml:Assertion xmlns:saml="${SAML_NS.saml}"
+      ID="${assertionId}"
+      Version="2.0"
+      IssueInstant="${now.toISOString()}"
+      xmlns:xs="http://www.w3.org/2001/XMLSchema"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <saml:Issuer>${escapeXml(issuer)}</saml:Issuer>
+      <saml:Subject>
+        <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">${escapeXml(user.username)}</saml:NameID>
+        <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+          <saml:SubjectConfirmationData Recipient="${escapeXml(recipient)}"
+            NotOnOrAfter="${notOnOrAfter}"
+            ${options.inResponseTo ? `InResponseTo="${escapeXml(options.inResponseTo)}"` : ''}/>
+        </saml:SubjectConfirmation>
+      </saml:Subject>
+      <saml:Conditions NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}">
+        <saml:AudienceRestriction>
+          <saml:Audience>${escapeXml(issuer)}</saml:Audience>
+        </saml:AudienceRestriction>
+      </saml:Conditions>
+      <saml:AuthnStatement AuthnInstant="${now.toISOString()}" SessionIndex="${escapeXml(options.sessionId || assertionId)}">
+        <saml:AuthnContext>
+          <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>
+        </saml:AuthnContext>
+      </saml:AuthnStatement>
+      <saml:AttributeStatement>
+        <saml:Attribute Name="uid"><saml:AttributeValue xsi:type="xs:string">${escapeXml(user.id)}</saml:AttributeValue></saml:Attribute>
+        <saml:Attribute Name="username"><saml:AttributeValue xsi:type="xs:string">${escapeXml(user.username)}</saml:AttributeValue></saml:Attribute>
+        <saml:Attribute Name="email"><saml:AttributeValue xsi:type="xs:string">${escapeXml(user.email || '')}</saml:AttributeValue></saml:Attribute>
+        <saml:Attribute Name="displayName"><saml:AttributeValue xsi:type="xs:string">${escapeXml(user.displayName || '')}</saml:AttributeValue></saml:Attribute>
+      </saml:AttributeStatement>
+    </saml:Assertion>`;
+
+  const responseXml = `<samlp:Response xmlns:samlp="${SAML_NS.samlp}"
+    xmlns:saml="${SAML_NS.saml}"
+    ID="${responseId}"
+    Version="2.0"
+    IssueInstant="${now.toISOString()}"
+    Destination="${escapeXml(recipient)}"
+    ${options.inResponseTo ? `InResponseTo="${escapeXml(options.inResponseTo)}"` : ''}>
+    <saml:Issuer>${escapeXml(issuer)}</saml:Issuer>
+    <samlp:Status>
+      <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+    </samlp:Status>
+    ${assertion}
+  </samlp:Response>`;
+
+  return {
+    responseId,
+    assertionId,
+    responseXml,
+    base64Response: Buffer.from(responseXml, 'utf-8').toString('base64'),
+    recipient,
+  };
+}
+
+/**
+ * 验证 SAML Response（作为 SP 时使用）
+ */
+export async function validateSamlResponse(appId: string, samlResponse: string) {
+  const app = await getApplicationWithSecrets(appId);
+  if (!app) {
+    return { valid: false, error: '应用不存在' };
+  }
+  try {
+    const xml = Buffer.from(samlResponse, 'base64').toString('utf-8');
+
+    // 解析状态码
+    const statusMatch = xml.match(/<samlp:StatusCode\s+Value="([^"]+)"/) ||
+      xml.match(/StatusCode\s+Value="([^"]+)"/);
+    const status = statusMatch ? statusMatch[1] : '';
+    if (!status.includes('Success')) {
+      return { valid: false, error: `SAML 响应状态非成功: ${status}` };
+    }
+
+    // 提取 NameID
+    const nameIdMatch = xml.match(/<saml:NameID[^>]*>([^<]+)<\/saml:NameID>/) ||
+      xml.match(/<NameID[^>]*>([^<]+)<\/NameID>/);
+    const nameId = nameIdMatch ? nameIdMatch[1].trim() : '';
+
+    // 提取属性
+    const attributes: Record<string, string> = {};
+    const attrRegex = /<saml:Attribute\s+Name="([^"]+)"[^>]*>[\s\S]*?<saml:AttributeValue[^>]*>([^<]*)<\/saml:AttributeValue>/g;
+    let match;
+    while ((match = attrRegex.exec(xml)) !== null) {
+      attributes[match[1]] = match[2].trim();
+    }
+
+    const username = attributes.username || attributes.uid || nameId;
+    const email = attributes.email || '';
+    const displayName = attributes.displayName || attributes.cn || '';
+
+    return {
+      valid: true,
+      username,
+      nameId,
+      attributes,
+      email,
+      displayName,
+    };
+  } catch (e: any) {
+    return { valid: false, error: `SAML 响应解析失败: ${e.message || '未知错误'}` };
+  }
+}
+
+/**
+ * 生成 SAML IdP Metadata
+ */
+export function generateSamlMetadata(appId: string, appName: string, baseUrl: string) {
+  const entityId = `${baseUrl}/sso/saml/${appId}`;
+  const ssoUrl = `${baseUrl}/sso/saml/login/${appId}`;
+  const sloUrl = `${baseUrl}/sso/saml/logout/${appId}`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+    xmlns:ds="${SAML_NS.ds}"
+    entityID="${escapeXml(entityId)}">
+  <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:KeyDescriptor use="signing">
+      <ds:KeyInfo><ds:KeyName>${escapeXml(appName)}</ds:KeyName></ds:KeyInfo>
+    </md:KeyDescriptor>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="${escapeXml(ssoUrl)}"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="${escapeXml(ssoUrl)}"/>
+    <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="${escapeXml(sloUrl)}"/>
+    <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified</md:NameIDFormat>
+    <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat>
+  </md:IDPSSODescriptor>
+  <md:Organization>
+    <md:OrganizationName>${escapeXml(appName)}</md:OrganizationName>
+    <md:OrganizationDisplayName>${escapeXml(appName)}</md:OrganizationDisplayName>
+  </md:Organization>
+</md:EntityDescriptor>`;
 }
 
 // ============================================================

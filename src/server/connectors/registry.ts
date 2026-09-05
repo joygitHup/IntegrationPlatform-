@@ -110,6 +110,11 @@ import {
 import { HttpApiConnector, WebhookConnector } from './api';
 import { SftpConnector, FtpConnector, S3Connector, FileConnector } from './file';
 import { DingTalkConnector, WeComConnector, FeishuConnector } from './saas';
+import { MongoDBConnector, ElasticsearchConnector } from './nosql';
+import { LdapConnector, ActiveDirectoryConnector } from './ldap';
+import { ScimConnector } from './scim';
+import { DamengConnector, KingbaseConnector } from './domestic-db';
+import { YonyouU8Connector, FenxiangxiaokeConnector } from './enterprise-saas';
 
 // 数据库类
 registerConnector('mysql', new MysqlConnector().metadata, () => new MysqlConnector());
@@ -137,3 +142,23 @@ registerConnector('csv_excel', new FileConnector().metadata, () => new FileConne
 registerConnector('dingtalk', new DingTalkConnector().metadata, () => new DingTalkConnector());
 registerConnector('wecom', new WeComConnector().metadata, () => new WeComConnector());
 registerConnector('feishu', new FeishuConnector().metadata, () => new FeishuConnector());
+
+// NoSQL类
+registerConnector('mongodb', new MongoDBConnector().metadata, () => new MongoDBConnector());
+registerConnector('elasticsearch', new ElasticsearchConnector().metadata, () => new ElasticsearchConnector());
+
+// 目录服务类
+registerConnector('ldap', new LdapConnector().metadata, () => new LdapConnector());
+registerConnector('active_directory', new ActiveDirectoryConnector().metadata, () => new ActiveDirectoryConnector());
+
+// 身份协议类
+registerConnector('scim2', new ScimConnector().metadata, () => new ScimConnector());
+
+// 国产数据库
+registerConnector('dameng', new DamengConnector().metadata, () => new DamengConnector());
+registerConnector('kingbase', new KingbaseConnector().metadata, () => new KingbaseConnector());
+
+// 企业级SaaS
+registerConnector('yonyou_u8', new YonyouU8Connector().metadata, () => new YonyouU8Connector());
+registerConnector('fenxiangxiaoke', new FenxiangxiaokeConnector().metadata, () => new FenxiangxiaokeConnector());
+
