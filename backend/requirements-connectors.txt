@@ -1,0 +1,11 @@
+# 连接器可选驱动（按需安装，缺驱动时接口会明确报错）
+
+oracledb>=2.5
+pymssql>=2.3
+pymongo>=4.10
+paramiko>=3.5
+boto3>=1.35
+ldap3>=2.9
+openpyxl>=3.1
+# elasticsearch 走 HTTP，无需官方客户端
+# dmPython 请按达梦文档安装

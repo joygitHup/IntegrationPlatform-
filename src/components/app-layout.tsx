@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react';
 import { AppSidebar } from '@/components/app-sidebar';
+import { ScopeSwitcher } from '@/components/scope-switcher';
 import { useAuth } from '@/lib/auth-context';
 import { Loader2 } from 'lucide-react';
 
@@ -23,6 +24,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
       <main className="flex-1 overflow-y-auto">
+        <ScopeSwitcher />
         {children}
       </main>
     </div>

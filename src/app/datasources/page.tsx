@@ -2,7 +2,14 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { AppLayout } from '@/components/app-layout';
-import { datasourcesApi, connectorsApi, type ConnectorMetadata } from '@/lib/api-client';
+import { datasourcesApi, connectorsApi, openApi, type ConnectorMetadata } from '@/lib/api-client';
+import {
+  DATASOURCE_CODE_PATTERN,
+  defaultsFromSchema,
+  resolveConnectorList,
+  suggestCode,
+  validateConfigFields,
+} from '@/lib/datasource-form';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -107,14 +114,16 @@ export default function DatasourcesPage() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [formData, setFormData] = useState({ name: '', code: '', type: 'mysql', description: '', config: {} as Record<string, unknown> });
+  const [formData, setFormData] = useState({ name: '', code: '', type: 'mysql', description: '', config: {} as Record<string, unknown>, clientId: '', environment: 'dev' });
+  const [partners, setPartners] = useState<any[]>([]);
+  const [codeTouched, setCodeTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadConnectors();
-  }, []);
+  }, [hasPermission]);
 
   useEffect(() => {
     if (connectors.length > 0) loadDatasources();
@@ -122,8 +131,22 @@ export default function DatasourcesPage() {
 
   const loadConnectors = async () => {
     try {
-      const list = await connectorsApi.list();
+      const list = resolveConnectorList(await connectorsApi.list());
       setConnectors(list);
+      if (hasPermission('open:manage')) {
+        try {
+          const clients = await openApi.clients.list();
+          setPartners(clients.items || []);
+        } catch {
+          setPartners([]);
+        }
+      }
+      setFormData((prev) => {
+        if (list.some((c) => c.type === prev.type)) return prev;
+        const first = list[0];
+        if (!first) return prev;
+        return { ...prev, type: first.type, config: defaultsFromSchema(first.configSchema) };
+      });
     } catch (e) {
       toast.error('加载连接器列表失败');
     } finally {
@@ -167,7 +190,7 @@ export default function DatasourcesPage() {
     try {
       const result = await datasourcesApi.testById(id);
       if (result.success) {
-        toast.success('连接成功', { description: `耗时: ${result.latencyMs}ms` });
+        toast.success('连接成功', { description: result.latencyMs != null ? `耗时: ${result.latencyMs}ms` : undefined });
       } else {
         toast.error('连接失败', { description: result.message });
       }
@@ -182,9 +205,11 @@ export default function DatasourcesPage() {
   const handleTestCurrent = async () => {
     const configSchema = currentConnector?.configSchema;
     if (!configSchema) return;
-    const required = configSchema.fields.filter(f => f.required && !formData.config[f.name] && !f.showWhen);
-    if (required.length > 0) {
-      toast.error('请先填写必填字段', { description: required.map(r => r.label).join('、') });
+    const configErrors = validateConfigFields(configSchema, formData.config);
+    if (Object.keys(configErrors).length > 0) {
+      setFormErrors((prev) => ({ ...prev, ...configErrors }));
+      toast.error('请先填写必填字段', { description: Object.values(configErrors).join('、') });
+      setActiveTab('config');
       return;
     }
     setSubmitting(true);
@@ -192,9 +217,10 @@ export default function DatasourcesPage() {
       const result = await datasourcesApi.test({
         type: formData.type,
         config: formData.config,
+        ...(editingItem?.id ? { id: editingItem.id } : {}),
       });
       if (result.success) {
-        toast.success('连接成功', { description: `耗时: ${result.latencyMs}ms` });
+        toast.success('连接成功', { description: result.latencyMs != null ? `耗时: ${result.latencyMs}ms` : undefined });
       } else {
         toast.error('连接失败', { description: result.message });
       }
@@ -219,8 +245,19 @@ export default function DatasourcesPage() {
   };
 
   const openCreate = () => {
+    const initialType = connectors.some((c) => c.type === 'mysql') ? 'mysql' : (connectors[0]?.type || 'mysql');
+    const connector = connectors.find((c) => c.type === initialType);
     setEditingItem(null);
-    setFormData({ name: '', code: '', type: 'mysql', description: '', config: {} });
+    setCodeTouched(false);
+    setFormData({
+      name: '',
+      code: '',
+      type: initialType,
+      description: '',
+      config: defaultsFromSchema(connector?.configSchema),
+      clientId: '',
+      environment: 'dev',
+    });
     setFormErrors({});
     setActiveTab('basic');
     setDialogOpen(true);
@@ -228,37 +265,80 @@ export default function DatasourcesPage() {
 
   const openEdit = async (item: any) => {
     setEditingItem(item);
+    setCodeTouched(true);
+    setFormErrors({});
+    setActiveTab('basic');
+    setDialogOpen(true);
+    const connector = connectors.find((c) => c.type === item.type);
     setFormData({
       name: item.name,
       code: item.code,
       type: item.type,
       description: item.description || '',
-      config: item.config || {},
+      config: { ...defaultsFromSchema(connector?.configSchema), ...(item.config || {}) },
+      clientId: item.clientId || '',
+      environment: item.environment || 'dev',
     });
-    setFormErrors({});
-    setActiveTab('basic');
-    setDialogOpen(true);
+    try {
+      const detail = await datasourcesApi.get(item.id);
+      const detailConnector = connectors.find((c) => c.type === detail.type);
+      setFormData({
+        name: detail.name,
+        code: detail.code,
+        type: detail.type,
+        description: detail.description || '',
+        config: { ...defaultsFromSchema(detailConnector?.configSchema), ...(detail.config || {}) },
+        clientId: detail.clientId || '',
+        environment: detail.environment || 'dev',
+      });
+    } catch {
+      // 详情失败时沿用列表数据
+    }
+  };
+
+  const selectType = (type: string) => {
+    const connector = connectors.find((c) => c.type === type);
+    setFormData((prev) => ({
+      ...prev,
+      type,
+      config: defaultsFromSchema(connector?.configSchema),
+      code: codeTouched ? prev.code : (prev.name ? suggestCode(prev.name, type) : prev.code),
+    }));
+    setFormErrors((prev) => {
+      const next = { ...prev };
+      delete next.type;
+      return next;
+    });
   };
 
   const handleSubmit = async () => {
-    if (!formData.name.trim()) {
-      setFormErrors({ name: '请输入数据源名称' });
-      setActiveTab('basic');
-      return;
-    }
+    const nextErrors: Record<string, string> = {};
+    if (!formData.name.trim()) nextErrors.name = '请输入数据源名称';
     if (!formData.code.trim()) {
-      setFormErrors({ code: '请输入数据源编码' });
-      setActiveTab('basic');
+      nextErrors.code = '请输入数据源编码';
+    } else if (!DATASOURCE_CODE_PATTERN.test(formData.code.trim())) {
+      nextErrors.code = '编码只能以字母开头，可包含字母、数字、下划线和中划线';
+    }
+    const configErrors = validateConfigFields(currentConnector?.configSchema, formData.config);
+    Object.assign(nextErrors, configErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setFormErrors(nextErrors);
+      setActiveTab(nextErrors.name || nextErrors.code ? 'basic' : 'config');
+      if (Object.keys(configErrors).length > 0 && !nextErrors.name && !nextErrors.code) {
+        toast.error('请完善连接配置', { description: Object.values(configErrors).join('、') });
+      }
       return;
     }
     setSubmitting(true);
     try {
       const payload = {
-        name: formData.name,
-        code: formData.code,
+        name: formData.name.trim(),
+        code: formData.code.trim(),
         type: formData.type,
         description: formData.description,
         config: formData.config,
+        clientId: formData.clientId || '',
+        environment: formData.environment || 'dev',
       };
       if (editingItem) {
         await datasourcesApi.update(editingItem.id, payload);
@@ -484,7 +564,12 @@ export default function DatasourcesPage() {
                   <Input
                     value={formData.name}
                     onChange={(e) => {
-                      setFormData({ ...formData, name: e.target.value });
+                      const name = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        name,
+                        code: codeTouched ? prev.code : (name ? suggestCode(name, prev.type) : ''),
+                      }));
                       if (formErrors.name) setFormErrors({ ...formErrors, name: '' });
                     }}
                     placeholder="请输入数据源名称"
@@ -499,12 +584,15 @@ export default function DatasourcesPage() {
                   <Input
                     value={formData.code}
                     onChange={(e) => {
+                      setCodeTouched(true);
                       setFormData({ ...formData, code: e.target.value });
                       if (formErrors.code) setFormErrors({ ...formErrors, code: '' });
                     }}
+                    disabled={!!editingItem}
                     placeholder="英文编码，如 mysql_prod"
                     className={`font-mono ${formErrors.code ? 'border-red-300' : ''}`}
                   />
+                  {editingItem && <p className="text-xs text-muted-foreground">编码创建后不可修改</p>}
                   {formErrors.code && <p className="text-xs text-red-500">{formErrors.code}</p>}
                 </div>
               </div>
@@ -527,7 +615,7 @@ export default function DatasourcesPage() {
                             <button
                               key={c.type}
                               type="button"
-                              onClick={() => setFormData({ ...formData, type: c.type, config: {} })}
+                              onClick={() => selectType(c.type)}
                               className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-all ${selected
                                 ? 'border-blue-500 bg-blue-50 text-blue-700'
                                 : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
@@ -546,6 +634,36 @@ export default function DatasourcesPage() {
                     {currentConnector?.name || formData.type}
                   </Badge>
                 )}
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">运行环境</label>
+                <select
+                  className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={formData.environment || 'dev'}
+                  onChange={(e) => setFormData({ ...formData, environment: e.target.value })}
+                >
+                  <option value="dev">dev</option>
+                  <option value="staging">staging</option>
+                  <option value="prod">prod</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">所属集成商</label>
+                <select
+                  className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={formData.clientId || ''}
+                  onChange={(e) => setFormData({ ...formData, clientId: e.target.value })}
+                >
+                  <option value="">仅控制台可见（不开放给 Key）</option>
+                  {partners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  指派后，该集成商的 API Key 可以看见并调用此数据源。
+                </p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">描述</label>
@@ -575,7 +693,17 @@ export default function DatasourcesPage() {
                   <DynamicConfigForm
                     schema={currentConnector.configSchema as ConfigSchema}
                     values={formData.config}
-                    onChange={(v) => setFormData({ ...formData, config: v })}
+                    onChange={(v) => {
+                      setFormData({ ...formData, config: v });
+                      setFormErrors((prev) => {
+                        const next = { ...prev };
+                        Object.keys(v).forEach((k) => {
+                          if (next[k]) delete next[k];
+                        });
+                        return next;
+                      });
+                    }}
+                    errors={formErrors}
                     disabled={submitting}
                   />
                 </div>

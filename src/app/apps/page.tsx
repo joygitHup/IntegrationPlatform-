@@ -7,6 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Search,
   ExternalLink,
@@ -46,6 +55,10 @@ export default function AppsPortalPage() {
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<string>('__all__');
   const [launching, setLaunching] = useState<string | null>(null);
+  const [bindApp, setBindApp] = useState<any | null>(null);
+  const [bindUser, setBindUser] = useState('');
+  const [bindPass, setBindPass] = useState('');
+  const [bindSaving, setBindSaving] = useState(false);
 
   useEffect(() => {
     loadApps();
@@ -72,25 +85,69 @@ export default function AppsPortalPage() {
 
   const categories = Array.from(new Set(apps.map((a) => a.category).filter(Boolean)));
 
+  const openAutoSubmit = (html: string) => {
+    const win = window.open('', '_blank');
+    if (!win) {
+      toast.error('浏览器拦截了弹窗，请允许后重试');
+      return false;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    return true;
+  };
+
   const handleLaunch = async (app: any) => {
     setLaunching(app.id);
     try {
       const result = await appsApi.ssoLogin(app.id);
+      if (result.needBinding || (result.type === 'form_based' && !result.html)) {
+        setBindApp(app);
+        setBindUser('');
+        setBindPass('');
+        toast.info(result.error || '请先绑定该应用的账号密码');
+        return;
+      }
+      if (result.type === 'form_based' && result.html) {
+        if (openAutoSubmit(result.html)) {
+          toast.success(`正在代填登录 ${app.name}...`);
+        }
+        return;
+      }
       const targetUrl = result.url || result.loginUrl || result.authorizeUrl;
       if (targetUrl) {
         window.open(targetUrl, '_blank');
         toast.success(`正在跳转到 ${app.name}...`);
       } else {
         toast.info('请在新页面中完成登录');
-        if (result.url === undefined && result.loginUrl === undefined) {
-          // form_based 或其他类型
-          console.log('SSO result:', result);
-        }
       }
     } catch (error: any) {
       toast.error(error.message || '启动应用失败');
     } finally {
       setLaunching(null);
+    }
+  };
+
+  const submitBinding = async () => {
+    if (!bindApp) return;
+    if (!bindUser.trim() || !bindPass) {
+      toast.error('请填写账号和密码');
+      return;
+    }
+    setBindSaving(true);
+    try {
+      await appsApi.bindings.create({
+        appId: bindApp.id,
+        credentials: { username: bindUser.trim(), password: bindPass },
+        externalUsername: bindUser.trim(),
+      });
+      setBindApp(null);
+      toast.success('已绑定，正在代填登录');
+      await handleLaunch(bindApp);
+    } catch (error: any) {
+      toast.error(error.message || '绑定失败');
+    } finally {
+      setBindSaving(false);
     }
   };
 
@@ -223,6 +280,45 @@ export default function AppsPortalPage() {
           })}
         </div>
       )}
+
+      <Dialog open={Boolean(bindApp)} onOpenChange={(open) => { if (!open) setBindApp(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>绑定 {bindApp?.name} 账号</DialogTitle>
+            <DialogDescription>
+              表单代填会把账号密码提交到对方登录页，仅保存在本平台加密存储中。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label>对方系统账号</Label>
+              <Input
+                value={bindUser}
+                onChange={(e) => setBindUser(e.target.value)}
+                placeholder="用户名"
+                autoComplete="username"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>对方系统密码</Label>
+              <Input
+                type="password"
+                value={bindPass}
+                onChange={(e) => setBindPass(e.target.value)}
+                placeholder="密码"
+                autoComplete="current-password"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBindApp(null)}>取消</Button>
+            <Button onClick={submitBinding} disabled={bindSaving}>
+              {bindSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              绑定并打开
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </AppLayout>
   );

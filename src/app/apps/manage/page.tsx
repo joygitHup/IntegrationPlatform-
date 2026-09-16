@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/app-layout';
-import { appsApi } from '@/lib/api-client';
+import { appsApi, openApi } from '@/lib/api-client';
+import {
+  CATEGORY_OPTIONS,
+  LOGIN_TYPE_OPTIONS,
+  buildAppPayload,
+  emptyAppForm,
+  formFromAppDetail,
+  suggestAppCode,
+  validateAppForm,
+} from '@/lib/app-form';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,22 +56,7 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-
-const loginTypeOptions = [
-  { value: 'jwt', label: 'JWT 令牌跳转' },
-  { value: 'ticket', label: '一次性 Ticket' },
-  { value: 'oauth2', label: 'OAuth 2.0' },
-  { value: 'saml', label: 'SAML 2.0' },
-  { value: 'form_based', label: '表单代填' },
-];
-
-const categoryOptions = [
-  { value: 'business', label: '业务系统' },
-  { value: 'data', label: '数据平台' },
-  { value: 'devops', label: '研发运维' },
-  { value: 'collaboration', label: '协同办公' },
-  { value: 'other', label: '其他' },
-];
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function AppsManagePage() {
   const { hasPermission } = useAuth();
@@ -77,10 +71,13 @@ export default function AppsManagePage() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<any>(null);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState({ ...emptyAppForm });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [codeTouched, setCodeTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [partners, setPartners] = useState<any[]>([]);
 
   const canWrite = hasPermission('app:write');
   const canDelete = hasPermission('app:delete');
@@ -88,6 +85,12 @@ export default function AppsManagePage() {
   useEffect(() => {
     loadApps();
   }, [page, keyword, category, status]);
+
+  useEffect(() => {
+    if (hasPermission('open:manage')) {
+      openApi.clients.list().then((r) => setPartners(r.items || [])).catch(() => setPartners([]));
+    }
+  }, [hasPermission]);
 
   const loadApps = async () => {
     setLoading(true);
@@ -109,51 +112,45 @@ export default function AppsManagePage() {
 
   const openCreate = () => {
     setEditingApp(null);
-    setFormData({
-      name: '',
-      code: '',
-      description: '',
-      icon: '',
-      category: 'business',
-      loginType: 'jwt',
-      loginUrl: '',
-      logoutUrl: '',
-      visible: true,
-      sortOrder: 0,
-    });
+    setCodeTouched(false);
+    setFormErrors({});
+    setFormData({ ...emptyAppForm });
     setDialogOpen(true);
   };
 
-  const openEdit = (app: any) => {
+  const openEdit = async (app: any) => {
     setEditingApp(app);
-    setFormData({
-      name: app.name,
-      code: app.code,
-      description: app.description || '',
-      icon: app.icon || '',
-      category: app.category,
-      loginType: app.loginType,
-      loginUrl: app.loginUrl || '',
-      logoutUrl: app.logoutUrl || '',
-      visible: app.visible,
-      sortOrder: app.sortOrder || 0,
-    });
+    setCodeTouched(true);
+    setFormErrors({});
+    setFormData(formFromAppDetail(app));
     setDialogOpen(true);
+    try {
+      const detail = await appsApi.get(app.id);
+      setFormData(formFromAppDetail(detail));
+    } catch {
+      // 详情失败时沿用列表数据
+    }
   };
 
   const handleSubmit = async () => {
-    if (!formData.name || !formData.code) {
-      toast.error('请填写应用名称和编码');
+    const errors = validateAppForm(formData);
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      toast.error('请检查表单填写');
       return;
     }
     setSubmitting(true);
     try {
+      const payload = buildAppPayload(formData);
       if (editingApp) {
-        await appsApi.update(editingApp.id, formData);
+        await appsApi.update(editingApp.id, payload);
         toast.success('应用更新成功');
       } else {
-        await appsApi.create(formData);
+        const created = await appsApi.create(payload);
         toast.success('应用创建成功');
+        if (created?.secretKey) {
+          toast.info('已生成应用密钥，请妥善保存', { description: created.secretKey });
+        }
       }
       setDialogOpen(false);
       loadApps();
@@ -206,7 +203,7 @@ export default function AppsManagePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">全部分类</SelectItem>
-                  {categoryOptions.map((opt) => (
+                  {CATEGORY_OPTIONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                   ))}
                 </SelectContent>
@@ -282,11 +279,11 @@ export default function AppsManagePage() {
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{app.code}</td>
                         <td className="px-4 py-3">
-                          {categoryOptions.find((c) => c.value === app.category)?.label || app.category}
+                          {CATEGORY_OPTIONS.find((c) => c.value === app.category)?.label || app.category}
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className="text-xs">
-                            {loginTypeOptions.find((t) => t.value === app.loginType)?.label || app.loginType}
+                            {LOGIN_TYPE_OPTIONS.find((t) => t.value === app.loginType)?.label || app.loginType}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
@@ -354,8 +351,8 @@ export default function AppsManagePage() {
       </Card>
 
       {/* 新建/编辑对话框 */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-xl">
+      <Dialog open={dialogOpen} onOpenChange={(o) => !submitting && setDialogOpen(o)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingApp ? '编辑应用' : '新建应用'}</DialogTitle>
             <DialogDescription>
@@ -363,130 +360,225 @@ export default function AppsManagePage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+          <Tabs defaultValue="basic">
+            <TabsList>
+              <TabsTrigger value="basic">基本信息</TabsTrigger>
+              <TabsTrigger value="login">登录配置</TabsTrigger>
+            </TabsList>
+            <TabsContent value="basic" className="grid gap-4 pt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>应用名称 <span className="text-red-500">*</span></Label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        name,
+                        code: codeTouched || editingApp ? prev.code : (name ? suggestAppCode(name) : ''),
+                      }));
+                    }}
+                    placeholder="如：企业邮箱"
+                    className={formErrors.name ? 'border-destructive' : ''}
+                  />
+                  {formErrors.name && <p className="text-xs text-destructive">{formErrors.name}</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label>应用编码 <span className="text-red-500">*</span></Label>
+                  <Input
+                    value={formData.code}
+                    onChange={(e) => {
+                      setCodeTouched(true);
+                      setFormData({ ...formData, code: e.target.value });
+                    }}
+                    placeholder="如：email"
+                    disabled={!!editingApp}
+                    className={formErrors.code ? 'border-destructive' : ''}
+                  />
+                  {formErrors.code && <p className="text-xs text-destructive">{formErrors.code}</p>}
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="name">应用名称 <span className="text-red-500">*</span></Label>
+                <Label>应用描述</Label>
                 <Input
-                  id="name"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="如：企业邮箱"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="简要描述应用用途"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="code">应用编码 <span className="text-red-500">*</span></Label>
-                <Input
-                  id="code"
-                  value={formData.code || ''}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                  placeholder="如：email"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="description">应用描述</Label>
-              <Input
-                id="description"
-                value={formData.description || ''}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="简要描述应用用途"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="icon">图标（Emoji）</Label>
-                <Input
-                  id="icon"
-                  value={formData.icon || ''}
-                  onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-                  placeholder="📧"
-                  className="text-xl"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>分类</Label>
-                <Select
-                  value={formData.category || 'business'}
-                  onValueChange={(v) => setFormData({ ...formData, category: v })}
+                <Label>所属集成商</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={formData.clientId || ''}
+                  onChange={(e) => setFormData({ ...formData, clientId: e.target.value })}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <option value="">仅控制台可见（不开放给 Key）</option>
+                  {partners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  指派后，该集成商的 API Key 可以看见并调用此应用。
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>图标（Emoji）</Label>
+                  <Input
+                    value={formData.icon}
+                    onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
+                    placeholder="📧"
+                    className="text-xl"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>分类</Label>
+                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORY_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <div className="text-sm font-medium">在门户中显示</div>
+                    <div className="text-xs text-muted-foreground">关闭后用户不可见</div>
+                  </div>
+                  <Switch
+                    checked={formData.visible}
+                    onCheckedChange={(v) => setFormData({ ...formData, visible: v })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>排序权重</Label>
+                  <Input
+                    type="number"
+                    value={formData.sortOrder}
+                    onChange={(e) => setFormData({ ...formData, sortOrder: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="login" className="grid gap-4 pt-4">
+              <div className="space-y-2">
+                <Label>登录方式</Label>
+                <Select value={formData.loginType} onValueChange={(v) => setFormData({ ...formData, loginType: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {categoryOptions.map((opt) => (
+                    {LOGIN_TYPE_OPTIONS.map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>登录方式</Label>
-              <Select
-                value={formData.loginType || 'jwt'}
-                onValueChange={(v) => setFormData({ ...formData, loginType: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {loginTypeOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="loginUrl">登录地址</Label>
-                <Input
-                  id="loginUrl"
-                  value={formData.loginUrl || ''}
-                  onChange={(e) => setFormData({ ...formData, loginUrl: e.target.value })}
-                  placeholder="https://..."
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="logoutUrl">登出地址</Label>
-                <Input
-                  id="logoutUrl"
-                  value={formData.logoutUrl || ''}
-                  onChange={(e) => setFormData({ ...formData, logoutUrl: e.target.value })}
-                  placeholder="https://..."
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <div className="text-sm font-medium">在门户中显示</div>
-                  <div className="text-xs text-muted-foreground">关闭后用户不可见</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>登录地址 {['jwt', 'ticket', 'form_based'].includes(formData.loginType) && <span className="text-red-500">*</span>}</Label>
+                  <Input
+                    value={formData.loginUrl}
+                    onChange={(e) => setFormData({ ...formData, loginUrl: e.target.value })}
+                    placeholder="https://..."
+                    className={formErrors.loginUrl ? 'border-destructive' : ''}
+                  />
+                  {formErrors.loginUrl && <p className="text-xs text-destructive">{formErrors.loginUrl}</p>}
                 </div>
-                <Switch
-                  checked={formData.visible ?? true}
-                  onCheckedChange={(v) => setFormData({ ...formData, visible: v })}
-                />
+                <div className="space-y-2">
+                  <Label>登出地址</Label>
+                  <Input
+                    value={formData.logoutUrl}
+                    onChange={(e) => setFormData({ ...formData, logoutUrl: e.target.value })}
+                    placeholder="https://..."
+                  />
+                </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="sortOrder">排序权重</Label>
+                <Label>回调地址</Label>
                 <Input
-                  id="sortOrder"
-                  type="number"
-                  value={formData.sortOrder ?? 0}
-                  onChange={(e) => setFormData({ ...formData, sortOrder: parseInt(e.target.value) || 0 })}
+                  value={formData.callbackUrl}
+                  onChange={(e) => setFormData({ ...formData, callbackUrl: e.target.value })}
+                  placeholder="https://..."
                 />
               </div>
-            </div>
-          </div>
+              {formData.loginType === 'jwt' && (
+                <div className="space-y-2">
+                  <Label>JWT 有效期（秒）</Label>
+                  <Input
+                    type="number"
+                    value={formData.jwtExpiresIn}
+                    onChange={(e) => setFormData({ ...formData, jwtExpiresIn: parseInt(e.target.value) || 30 })}
+                  />
+                </div>
+              )}
+              {formData.loginType === 'ticket' && (
+                <div className="space-y-2">
+                  <Label>Ticket 有效期（秒）</Label>
+                  <Input
+                    type="number"
+                    value={formData.ticketExpiresIn}
+                    onChange={(e) => setFormData({ ...formData, ticketExpiresIn: parseInt(e.target.value) || 60 })}
+                  />
+                </div>
+              )}
+              {formData.loginType === 'oauth2' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label>授权地址 <span className="text-red-500">*</span></Label>
+                    <Input
+                      value={formData.oauthAuthUrl}
+                      onChange={(e) => setFormData({ ...formData, oauthAuthUrl: e.target.value })}
+                      placeholder="https://idp.example.com/authorize"
+                      className={formErrors.oauthAuthUrl ? 'border-destructive' : ''}
+                    />
+                    {formErrors.oauthAuthUrl && <p className="text-xs text-destructive">{formErrors.oauthAuthUrl}</p>}
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client ID</Label>
+                    <Input value={formData.oauthClientId} onChange={(e) => setFormData({ ...formData, oauthClientId: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client Secret</Label>
+                    <Input type="password" value={formData.oauthClientSecret} onChange={(e) => setFormData({ ...formData, oauthClientSecret: e.target.value })} placeholder="留空则不修改" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Token URL</Label>
+                    <Input value={formData.oauthTokenUrl} onChange={(e) => setFormData({ ...formData, oauthTokenUrl: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>UserInfo URL</Label>
+                    <Input value={formData.oauthUserinfoUrl} onChange={(e) => setFormData({ ...formData, oauthUserinfoUrl: e.target.value })} />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>Scope</Label>
+                    <Input value={formData.oauthScope} onChange={(e) => setFormData({ ...formData, oauthScope: e.target.value })} placeholder="openid profile email" />
+                  </div>
+                </div>
+              )}
+              {formData.loginType === 'saml' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label>IdP Metadata URL</Label>
+                    <Input value={formData.samlIdpMetadataUrl} onChange={(e) => setFormData({ ...formData, samlIdpMetadataUrl: e.target.value })} />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>SP Entity ID</Label>
+                    <Input value={formData.samlSpEntityId} onChange={(e) => setFormData({ ...formData, samlSpEntityId: e.target.value })} />
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>取消</Button>
             <Button onClick={handleSubmit} disabled={submitting}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {editingApp ? '保存' : '创建'}

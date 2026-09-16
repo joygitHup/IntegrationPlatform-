@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { apiClient, authApi } from '@/lib/api-client';
+import { hasPermission as checkPermission, safeRedirectPath } from '@/lib/permissions';
 import { useRouter, usePathname } from 'next/navigation';
 
 interface User {
@@ -13,13 +14,18 @@ interface User {
   email?: string | null;
   roleCode?: string;
   roleName?: string;
+  status?: string;
+  lastLoginAt?: string | null;
+  /** 所属集成客户 client_id；空串表示平台账号 */
+  clientId?: string;
 }
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
 
@@ -38,9 +44,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const token = localStorage.getItem('access_token');
       if (!token) {
         setLoading(false);
-        if (!PUBLIC_PATHS.includes(pathname)) {
-          router.push('/login');
-        }
         return;
       }
 
@@ -51,41 +54,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(result.user);
       } catch {
         apiClient.clearToken();
-        if (!PUBLIC_PATHS.includes(pathname)) {
-          router.push('/login');
-        }
+        setUser(null);
       } finally {
         setLoading(false);
       }
     };
 
     initAuth();
-  }, [pathname, router]);
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    const isPublic = PUBLIC_PATHS.includes(pathname);
+    if (!user && !isPublic) {
+      const from = pathname && pathname !== '/' ? `?from=${encodeURIComponent(pathname)}` : '';
+      router.replace(`/login${from}`);
+    }
+  }, [loading, user, pathname, router]);
 
   const login = async (username: string, password: string) => {
-    const result = await authApi.login({ username, password });
+    const result = await authApi.login({ username: username.trim(), password });
     apiClient.setToken(result.accessToken);
     localStorage.setItem('refresh_token', result.refreshToken);
-    // 登录后立即获取完整用户信息（含权限列表）
-    const meResult = await authApi.me();
-    setUser(meResult.user);
-    router.push('/');
+    if (result.user?.permissions) {
+      setUser(result.user);
+    } else {
+      const meResult = await authApi.me();
+      setUser(meResult.user);
+    }
+    const from = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('from')
+      : null;
+    router.push(safeRedirectPath(from));
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // 本地退出仍需清理
+    }
     apiClient.clearToken();
     setUser(null);
     router.push('/login');
   };
 
-  const hasPermission = (permission: string): boolean => {
-    if (!user) return false;
-    if (!user.permissions || user.permissions.length === 0) return false;
-    return user.permissions.includes(permission) || user.permissions.includes('*');
+  const changePassword = async (oldPassword: string, newPassword: string) => {
+    await authApi.changePassword({ oldPassword, newPassword });
   };
 
+  const hasPermission = (permission: string): boolean => checkPermission(user, permission);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, hasPermission }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, changePassword, hasPermission }}>
       {children}
     </AuthContext.Provider>
   );

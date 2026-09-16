@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>集成中台 · 产品介绍</title>
+<style>
+:root{
+  --primary:#2563eb; --primary-700:#1d4ed8; --primary-100:#dbeafe; --primary-50:#eff6ff;
+  --success:#16a34a; --success-50:#f0fdf4; --success-100:#dcfce7;
+  --warning:#d97706; --warning-50:#fffbeb; --warning-100:#fef3c7;
+  --danger:#dc2626;   --danger-50:#fef2f2;  --danger-100:#fee2e2;
+  --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --muted-2:#94a3b8;
+  --line:#e2e8f0; --line-2:#f1f5f9;
+  --bg-base:#f8fafc; --bg-card:#ffffff;
+  --navy:#0e1b2e; --navy-2:#152740;
+  --font:"Inter","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono","SFMono-Regular",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--navy); color:var(--ink); font-family:var(--font);
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+#viewport{position:fixed; inset:0; display:flex; align-items:center; justify-content:center}
+#stage{width:1280px; height:720px; position:relative; transform-origin:center center; flex:none}
+
+.slide{
+  position:absolute; inset:0; background:var(--bg-card);
+  border-radius:8px; box-shadow:0 24px 60px rgba(2,8,23,.55);
+  padding:52px 64px 44px; overflow:hidden;
+  opacity:0; visibility:hidden; transform:translateY(10px);
+  transition:opacity 200ms ease-out, transform 200ms ease-out;
+}
+.slide.active{opacity:1; visibility:visible; transform:none}
+
+/* ---------- shared type ---------- */
+.kicker{
+  font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--primary); display:flex; align-items:center; gap:8px; margin-bottom:14px;
+}
+.kicker::before{content:""; width:18px; height:2px; background:var(--primary); display:block}
+h1{font-size:38px; font-weight:600; margin:0 0 10px; letter-spacing:-.01em; line-height:1.2}
+h1.sm{font-size:32px}
+.sub{font-size:16px; color:var(--muted); margin:0 0 26px; line-height:1.6; max-width:1000px}
+h2{font-size:19px; font-weight:600; margin:0 0 10px}
+p{margin:0; line-height:1.65}
+.mono{font-family:var(--mono)}
+.note{font-size:11.5px; color:var(--muted-2); margin-top:14px}
+
+/* ---------- footer ---------- */
+.foot{
+  position:absolute; left:64px; right:64px; bottom:20px; display:flex;
+  justify-content:space-between; align-items:center; font-size:11px; color:var(--muted-2);
+  border-top:1px solid var(--line-2); padding-top:10px;
+}
+.foot .brand{font-weight:600; color:var(--muted); letter-spacing:.02em}
+
+/* ---------- cards ---------- */
+.grid{display:grid; gap:14px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.card{
+  background:var(--bg-card); border:1px solid var(--line); border-radius:8px;
+  padding:18px 20px;
+}
+.card.tint{background:var(--bg-base)}
+.card h3{font-size:15px; font-weight:600; margin:0 0 8px; display:flex; align-items:center; gap:8px}
+.card p{font-size:13px; color:var(--muted); line-height:1.6}
+.card .val{
+  margin-top:12px; padding-top:11px; border-top:1px dashed var(--line);
+  font-size:12.5px; color:var(--primary-700); font-weight:500; line-height:1.55;
+}
+.dot{width:7px; height:7px; border-radius:50%; background:var(--primary); flex:none; display:block}
+.dot.g{background:var(--success)} .dot.w{background:var(--warning)} .dot.r{background:var(--danger)}
+
+/* ---------- badges / chips ---------- */
+.badge{
+  display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:4px;
+  font-size:11.5px; font-weight:500; border:1px solid var(--line); color:var(--ink-2);
+  background:var(--bg-base);
+}
+.badge.blue{background:var(--primary-50); border-color:var(--primary-100); color:var(--primary-700)}
+.badge.green{background:var(--success-50); border-color:var(--success-100); color:#15803d}
+.badge.amber{background:var(--warning-50); border-color:var(--warning-100); color:#b45309}
+.badge.red{background:var(--danger-50); border-color:var(--danger-100); color:#b91c1c}
+.chips{display:flex; flex-wrap:wrap; gap:7px}
+.chips.tight{gap:6px}
+
+/* ---------- stat ---------- */
+.stat{display:flex; align-items:baseline; gap:8px}
+.stat .n{font-size:34px; font-weight:600; letter-spacing:-.02em; line-height:1}
+.stat .u{font-size:13px; color:var(--muted)}
+.stat.blue .n{color:var(--primary)}
+.stat.green .n{color:var(--success)}
+.stat.red .n{color:var(--danger)}
+.stat.amber .n{color:var(--warning)}
+
+/* ---------- table ---------- */
+table{width:100%; border-collapse:collapse; font-size:13px}
+th{
+  text-align:left; font-size:11.5px; font-weight:600; color:var(--muted);
+  letter-spacing:.06em; text-transform:uppercase; padding:0 12px 9px 0;
+  border-bottom:1px solid var(--line);
+}
+td{padding:10px 12px 10px 0; border-bottom:1px solid var(--line-2); color:var(--ink-2); vertical-align:top}
+tr:last-child td{border-bottom:none}
+td strong{font-weight:600; color:var(--ink)}
+
+/* ---------- architecture ---------- */
+.arch{display:flex; flex-direction:column; gap:8px}
+.layer{display:flex; gap:14px; align-items:stretch}
+.layer .lname{
+  flex:none; width:104px; border-radius:6px; padding:10px 8px; text-align:center;
+  font-size:12.5px; font-weight:600; color:#fff; display:flex; align-items:center; justify-content:center;
+}
+.layer .lbody{
+  flex:1; border:1px solid var(--line); border-radius:6px; background:var(--bg-base);
+  padding:9px 12px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;
+}
+.l1{background:#2563eb} .l2{background:#3b82f6} .l3{background:#0ea5e9}
+.l4{background:#16a34a} .l5{background:#d97706} .l6{background:#64748b} .l7{background:#0f172a}
+
+/* ---------- timeline bars ---------- */
+.tl{display:flex; flex-direction:column; gap:16px}
+.tlrow{display:grid; grid-template-columns:140px 1fr 92px; gap:14px; align-items:center}
+.tlrow .lbl{font-size:13px; font-weight:600}
+.track{height:34px; border-radius:5px; background:var(--line-2); overflow:hidden; display:flex}
+.seg{display:flex; align-items:center; justify-content:center; font-size:11px; color:#fff; font-weight:500; white-space:nowrap}
+.seg.a{background:#94a3b8} .seg.b{background:#64748b} .seg.c{background:#475569} .seg.d{background:#334155}
+.seg.p{background:#2563eb} .seg.q{background:#3b82f6} .seg.r{background:#60a5fa} .seg.s{background:#93c5fd; color:#1e3a8a}
+.tlrow .tot{font-size:14px; font-weight:600; text-align:right; font-family:var(--mono)}
+
+/* ---------- section dividers ---------- */
+.slide.sec{background:var(--navy); color:#fff; display:flex; flex-direction:column; justify-content:center}
+.slide.sec .big{
+  font-size:96px; font-weight:600; color:rgba(96,165,250,.28); line-height:1;
+  letter-spacing:-.04em; margin-bottom:-18px;
+}
+.slide.sec h1{font-size:42px; color:#fff; margin-bottom:14px}
+.slide.sec .sub{color:#94a3b8; font-size:17px; max-width:820px; margin:0}
+.slide.sec .rule{width:56px; height:3px; background:var(--primary); margin:22px 0 0}
+.slide.sec .foot{border-top-color:rgba(148,163,184,.2)}
+.slide.sec .foot .brand{color:#64748b}
+
+/* ---------- cover ---------- */
+.slide.cover{background:var(--navy); color:#fff; padding:0}
+.cover-wrap{position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; padding:0 84px}
+.cover .mark{
+  display:inline-flex; align-items:center; gap:10px; font-size:12px; font-weight:600;
+  letter-spacing:.16em; text-transform:uppercase; color:#60a5fa; margin-bottom:26px;
+}
+.cover .mark .sq{width:22px; height:22px; border-radius:5px; background:var(--primary); display:block}
+.cover h1{font-size:58px; line-height:1.12; margin:0 0 18px; letter-spacing:-.025em}
+.cover .lead{font-size:18px; color:#94a3b8; line-height:1.65; max-width:760px; margin-bottom:34px}
+.cover .tags{display:flex; gap:9px; flex-wrap:wrap}
+.cover .tags span{
+  font-size:12.5px; padding:5px 12px; border-radius:4px; border:1px solid rgba(96,165,250,.32);
+  color:#bfdbfe; background:rgba(37,99,235,.12);
+}
+.cover-foot{
+  position:absolute; left:84px; right:84px; bottom:44px; display:flex; justify-content:space-between;
+  font-size:12px; color:#64748b; border-top:1px solid rgba(148,163,184,.16); padding-top:16px;
+}
+
+/* ---------- hub diagram wrap ---------- */
+.dia-wrap{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+.dia{background:var(--bg-base); border:1px solid var(--line); border-radius:8px; padding:14px 16px 8px}
+.dia .cap{font-size:13px; font-weight:600; margin-bottom:2px}
+.dia .cap small{font-weight:400; color:var(--muted); font-size:12px}
+.dia .metric{font-family:var(--mono); font-size:13px; font-weight:600; margin-top:4px}
+.dia .metric.bad{color:var(--danger)} .dia .metric.good{color:var(--success)}
+svg{display:block; width:100%; height:auto}
+
+/* ---------- steps ---------- */
+.steps{display:grid; grid-template-columns:repeat(4,1fr); gap:0; margin-top:10px}
+.step{position:relative; padding:0 18px 0 0}
+.step .idx{
+  width:32px; height:32px; border-radius:6px; background:var(--primary-50); color:var(--primary-700);
+  font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; margin-bottom:12px;
+  border:1px solid var(--primary-100);
+}
+.step h3{font-size:15px; font-weight:600; margin:0 0 8px}
+.step ul{margin:0; padding-left:0; list-style:none}
+.step li{font-size:12.5px; color:var(--muted); line-height:1.65; padding-left:12px; position:relative}
+.step li::before{content:""; position:absolute; left:0; top:8px; width:4px; height:4px; border-radius:50%; background:var(--muted-2)}
+.step::after{
+  content:""; position:absolute; top:15px; right:6px; width:12px; height:1px; background:var(--line);
+}
+.step:last-child::after{display:none}
+
+/* ---------- callout ---------- */
+.callout{
+  display:flex; gap:14px; align-items:flex-start; background:var(--primary-50);
+  border-left:3px solid var(--primary); border-radius:0 6px 6px 0; padding:14px 18px;
+}
+.callout .txt{font-size:13.5px; color:#1e3a8a; line-height:1.6}
+.callout.warn{background:var(--warning-50); border-left-color:var(--warning)}
+.callout.warn .txt{color:#92400e}
+
+/* ---------- HUD ---------- */
+.hud{
+  position:fixed; left:0; right:0; bottom:0; height:3px; background:rgba(148,163,184,.16); z-index:40;
+}
+.hud .bar{height:100%; width:0; background:var(--primary); transition:width 200ms ease-out}
+.ctrl{
+  position:fixed; right:20px; bottom:22px; display:flex; align-items:center; gap:6px; z-index:41;
+}
+.ctrl button{
+  font-family:var(--font); font-size:12px; color:#cbd5e1; background:rgba(21,39,64,.9);
+  border:1px solid rgba(148,163,184,.24); border-radius:6px; padding:6px 11px; cursor:pointer;
+  transition:background 150ms ease-out, color 150ms ease-out;
+}
+.ctrl button:hover{background:#1e3a5f; color:#fff}
+.ctrl .count{font-family:var(--mono); font-size:12px; color:#94a3b8; padding:0 6px; min-width:58px; text-align:center}
+.pagenum{
+  position:fixed; left:22px; bottom:26px; font-family:var(--mono); font-size:11.5px;
+  color:#64748b; z-index:41; letter-spacing:.06em;
+}
+.menu{
+  position:fixed; inset:0; background:rgba(8,17,30,.94); z-index:60; display:none;
+  padding:56px 72px; overflow:auto;
+}
+.menu.open{display:block}
+.menu h4{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#60a5fa; margin:0 0 22px; font-weight:600}
+.menu ol{list-style:none; margin:0; padding:0; columns:2; column-gap:56px}
+.menu li{
+  break-inside:avoid; font-size:14px; color:#cbd5e1; padding:9px 12px; border-radius:6px; cursor:pointer;
+  display:flex; gap:12px; align-items:baseline; transition:background 150ms ease-out;
+}
+.menu li:hover{background:rgba(37,99,235,.18); color:#fff}
+.menu li .no{font-family:var(--mono); font-size:12px; color:#60a5fa; min-width:22px}
+.menu li.sec-item{color:#94a3b8; font-weight:600}
+.menu .hint{font-size:12px; color:#475569; margin-top:28px}
+
+@media print{
+  body{overflow:visible; background:#fff}
+  #viewport{position:static; display:block}
+  #stage{width:auto; height:auto; transform:none !important}
+  .slide{
+    position:static; opacity:1; visibility:visible; transform:none; box-shadow:none;
+    page-break-after:always; border-radius:0; width:1280px; height:720px; margin:0 auto;
+  }
+  .hud,.ctrl,.pagenum,.menu{display:none !important}
+}
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <div id="stage">
+
+    <!-- ============ 01 封面 ============ -->
+    <section class="slide cover" data-nav="封面">
+      <div class="cover-wrap">
+        <div class="mark"><span class="sq"></span>Integration Platform</div>
+        <h1>集成中台<br>让系统之间只连一次</h1>
+        <p class="lead">统一承接数据集成、身份单点、组织同步与对外开放服务。<br>
+        新增一个系统，增加的不是 N 条接口，而是 1 条接入。</p>
+        <div class="tags">
+          <span>数据集成</span><span>执行引擎与可靠性</span><span>身份与 SSO</span>
+          <span>组织用户同步</span><span>开放 API 门面</span><span>可观测与审计</span>
+        </div>
+      </div>
+      <div class="cover-foot">
+        <span>产品介绍 · 面向技术评估与业务决策</span>
+        <span>26 类内置连接器 · 全部能力均为已落地模块</span>
+      </div>
+    </section>
+
+    <!-- ============ 02 议程 ============ -->
+    <section class="slide" data-nav="本次沟通结构">
+      <div class="kicker">Agenda</div>
+      <h1>今天只回答三个问题</h1>
+      <p class="sub">不逐条念功能。我们把顺序倒过来——先看你们现在付出的代价，再看产品怎么把这个代价降下来，最后看怎么在你的环境里验证它。</p>
+      <div class="grid g3">
+        <div class="card tint">
+          <div class="stat blue" style="margin-bottom:14px"><span class="n">01</span></div>
+          <h3>为什么需要集成中台</h3>
+          <p>点对点集成在系统数量增长时的成本曲线，以及被隐藏的运维代价。</p>
+          <div class="val">对应页：集成现状 → 代价拆解</div>
+        </div>
+        <div class="card tint">
+          <div class="stat blue" style="margin-bottom:14px"><span class="n">02</span></div>
+          <h3>它是什么，能做什么</h3>
+          <p>产品定位与七项核心能力，每项都落到"你能少做什么"。</p>
+          <div class="val">对应页：定位 → 架构 → 七项能力 → 安全</div>
+        </div>
+        <div class="card tint">
+          <div class="stat blue" style="margin-bottom:14px"><span class="n">03</span></div>
+          <h3>怎么落到你这里</h3>
+          <p>交付节奏对比、角色分工、四步上线路径与验证方式。</p>
+          <div class="val">对应页：效率对比 → 角色 → 落地路径 → 下一步</div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:22px">
+        <div class="txt"><strong>沟通原则：</strong>我们会明确说出产品不做什么。凡是没有落地的扩展方向（如 CDC 实时捕获、K8s 自动扩缩容），本次不会作为能力介绍。</div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>02</span></div>
+    </section>
+
+    <!-- ============ 03 章节一 ============ -->
+    <section class="slide sec" data-nav="第一章 · 问题">
+      <div class="big">01</div>
+      <h1>问题不在接口本身<br>在接口的数量</h1>
+      <div class="rule"></div>
+      <p class="sub">当系统从 3 个变成 8 个，工作量不是涨 2.7 倍，而是涨 9 倍——因为连线是两两组合。</p>
+      <div class="foot"><span class="brand">01 / 集成现状</span><span>03</span></div>
+    </section>
+
+    <!-- ============ 04 N×N ============ -->
+    <section class="slide" data-nav="连线数量：N×N 成本">
+      <div class="kicker">成本结构</div>
+      <h1 class="sm">点对点：链路的数量是平方级的</h1>
+      <p class="sub">同样是 6 个系统互相打通，两种做法要维护的链路数量差 2.5 倍；到 8 个系统，差距拉到 3.5 倍。</p>
+      <div class="dia-wrap">
+        <div class="dia">
+          <div class="cap">手工点对点 <small>· 系统两两直连</small></div>
+          <svg viewBox="0 0 260 300" role="img" aria-label="点对点网状集成示意图">
+            <g stroke="#fca5a5" stroke-width="1.4" opacity=".9">
+              <line x1="130" y1="45" x2="221" y2="98"/><line x1="130" y1="45" x2="221" y2="202"/>
+              <line x1="130" y1="45" x2="130" y2="255"/><line x1="130" y1="45" x2="39" y2="202"/>
+              <line x1="130" y1="45" x2="39" y2="98"/>
+              <line x1="221" y1="98" x2="221" y2="202"/><line x1="221" y1="98" x2="130" y2="255"/>
+              <line x1="221" y1="98" x2="39" y2="202"/><line x1="221" y1="98" x2="39" y2="98"/>
+              <line x1="221" y1="202" x2="130" y2="255"/><line x1="221" y1="202" x2="39" y2="202"/>
+              <line x1="221" y1="202" x2="39" y2="98"/>
+              <line x1="130" y1="255" x2="39" y2="202"/><line x1="130" y1="255" x2="39" y2="98"/>
+              <line x1="39" y1="202" x2="39" y2="98"/>
+            </g>
+            <g fill="#ffffff" stroke="#dc2626" stroke-width="1.6">
+              <circle cx="130" cy="45" r="13"/><circle cx="221" cy="98" r="13"/>
+              <circle cx="221" cy="202" r="13"/><circle cx="130" cy="255" r="13"/>
+              <circle cx="39" cy="202" r="13"/><circle cx="39" cy="98" r="13"/>
+            </g>
+            <g font-family="Inter, sans-serif" font-size="9" font-weight="600" fill="#991b1b" text-anchor="middle">
+              <text x="130" y="49">S1</text><text x="221" y="102">S2</text><text x="221" y="206">S3</text>
+              <text x="130" y="259">S4</text><text x="39" y="206">S5</text><text x="39" y="102">S6</text>
+            </g>
+          </svg>
+          <div class="metric bad">6 个系统 = 15 条链路 · 8 个系统 = 28 条</div>
+        </div>
+        <div class="dia">
+          <div class="cap">经中台枢纽 <small>· 星型接入</small></div>
+          <svg viewBox="0 0 260 300" role="img" aria-label="中台枢纽星型集成示意图">
+            <g stroke="#2563eb" stroke-width="1.6" opacity=".55">
+              <line x1="130" y1="45" x2="130" y2="150"/><line x1="221" y1="98" x2="130" y2="150"/>
+              <line x1="221" y1="202" x2="130" y2="150"/><line x1="130" y1="255" x2="130" y2="150"/>
+              <line x1="39" y1="202" x2="130" y2="150"/><line x1="39" y1="98" x2="130" y2="150"/>
+            </g>
+            <g fill="#ffffff" stroke="#2563eb" stroke-width="1.6">
+              <circle cx="130" cy="45" r="13"/><circle cx="221" cy="98" r="13"/>
+              <circle cx="221" cy="202" r="13"/><circle cx="130" cy="255" r="13"/>
+              <circle cx="39" cy="202" r="13"/><circle cx="39" cy="98" r="13"/>
+            </g>
+            <rect x="100" y="128" width="60" height="44" rx="7" fill="#2563eb"/>
+            <text x="130" y="147" font-family="Inter, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">中台</text>
+            <text x="130" y="160" font-family="Inter, sans-serif" font-size="8" fill="#bfdbfe" text-anchor="middle">HUB</text>
+            <g font-family="Inter, sans-serif" font-size="9" font-weight="600" fill="#1d4ed8" text-anchor="middle">
+              <text x="130" y="49">S1</text><text x="221" y="102">S2</text><text x="221" y="206">S3</text>
+              <text x="130" y="259">S4</text><text x="39" y="206">S5</text><text x="39" y="102">S6</text>
+            </g>
+          </svg>
+          <div class="metric good">6 个系统 = 6 条链路 · 8 个系统 = 8 条</div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:18px">
+        <div class="txt"><strong>关键差别：</strong>点对点方案每新增 1 个系统，要新增 N 条链路并重测 N 个对接方；枢纽方案只新增 1 条接入，其余系统完全不动。</div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>04</span></div>
+    </section>
+
+    <!-- ============ 05 代价 ============ -->
+    <section class="slide" data-nav="被低估的四类代价">
+      <div class="kicker">代价拆解</div>
+      <h1 class="sm">真正的成本，发生在连线之后</h1>
+      <p class="sub">连线数量只是账面成本。以下四项才是集成方案上线后持续消耗团队精力的地方。</p>
+      <div class="grid g2" style="row-gap:14px">
+        <div class="card">
+          <h3><span class="dot w"></span>交付慢：每条链路都是一次小项目</h3>
+          <p>取数口径确认、接口开发、双方联调、测试验证，每一步都要两个团队同时在场。</p>
+          <div class="val">业务后果：新系统上线要排期等待，IT 变成瓶颈。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot r"></span>故障黑盒：失败之后只能人工补</h3>
+          <p>同步失败通常只留下日志。没有失败数据的滞留区，没有原样重放，也没有可回退的版本快照。</p>
+          <div class="val">业务后果：数据不一致要靠人肉核对，问题反复发生。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot w"></span>口径散落：字段映射写死在代码里</h3>
+          <p>同一个"客户编码"在不同系统的转换规则，分散在各系统的代码与配置中，没有统一视图。</p>
+          <div class="val">业务后果：改一个口径要动多个系统，还说不清谁改的。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot r"></span>身份孤岛：账号各管一套</h3>
+          <p>员工入职要逐个系统开号，离职要逐个系统关闭；跨系统跳转要重新登录，权限变更无审计。</p>
+          <div class="val">业务后果：离职账号残留是合规风险，跨系统体验差。</div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>05</span></div>
+    </section>
+
+    <!-- ============ 06 章节二 ============ -->
+    <section class="slide sec" data-nav="第二章 · 产品">
+      <div class="big">02</div>
+      <h1>它是什么<br>以及它明确不是什么</h1>
+      <div class="rule"></div>
+      <p class="sub">先把边界说清楚，后面的能力介绍才有意义。</p>
+      <div class="foot"><span class="brand">02 / 定位与能力</span><span>06</span></div>
+    </section>
+
+    <!-- ============ 07 定位 ============ -->
+    <section class="slide" data-nav="定位：做枢纽，不做又一个系统">
+      <div class="kicker">产品定位</div>
+      <h1 class="sm">它是枢纽，不是第 N+1 个业务系统</h1>
+      <p class="sub">中台自身不承载业务，只提供集成服务。它把"系统之间怎么连"这件事，从各业务系统的代码里抽出来，集中成可配置、可监控、可审计的能力。</p>
+      <div class="grid g3">
+        <div class="card tint">
+          <h3><span class="dot"></span>控制台与 API 分离</h3>
+          <p>运营在控制台完成资产登记、任务配置、授权与监控；业务方只通过 API 调用能力，不接触控制台。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot"></span>面向集成商的一把钥匙</h3>
+          <p>对外开放服务采用 API Key 门面。集成商用 Key 接入应用、数据、消息与身份，无需了解中台内部结构。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot"></span>资源可见性可控</h3>
+          <p>密钥只能看见"自己创建的"和"被运营指派给它"的资产，天然支持多集成商共存的隔离。</p>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:20px">
+        <div class="txt"><strong>一句话价值主张：</strong>接入中台之后，你的业务系统需要对接的不是 N 个其他系统，而是 1 套集成能力。</div>
+      </div>
+      <div class="note">说明：本页描述的是产品定位，非部署形态承诺。部署方式见第 20 页。</div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>07</span></div>
+    </section>
+
+    <!-- ============ 08 架构 ============ -->
+    <section class="slide" data-nav="产品全景架构">
+      <div class="kicker">Architecture</div>
+      <h1 class="sm">产品全景：七层能力，一套配置模型</h1>
+      <p class="sub">从底层连接器到上层开放门面，所有能力共用同一套数据源、任务与执行模型——这是"配置替代开发"能够成立的前提。</p>
+      <div class="arch">
+        <div class="layer">
+          <div class="lname l1">接入层</div>
+          <div class="lbody">
+            <span class="badge">数据库 ×8</span><span class="badge">API ×2</span>
+            <span class="badge">文件 ×4</span><span class="badge">SaaS ×8</span><span class="badge">消息 ×4</span>
+            <span class="badge blue">共 26 类内置连接器</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l2">引擎层</div>
+          <div class="lbody">
+            <span class="badge">ETL 抽取 → 转换 → 装载</span><span class="badge">DAG 多步编排</span>
+            <span class="badge">Cron / 事件 / Webhook 调度</span><span class="badge">队列（开发内存 / 生产 Celery）</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l3">治理层</div>
+          <div class="lbody">
+            <span class="badge">字段映射与转换</span><span class="badge">死信滞留与人工决裁</span>
+            <span class="badge">版本快照回滚</span><span class="badge">字段变更审计</span>
+            <span class="badge">失败重试 · 回执 · 告警</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l4">身份层</div>
+          <div class="lbody">
+            <span class="badge">SSO：JWT / Ticket / OAuth2 / SAML</span><span class="badge">跨系统免登跳转</span>
+            <span class="badge">组织与用户同步</span><span class="badge">会话管理与吊销</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l5">开放层</div>
+          <div class="lbody">
+            <span class="badge">API Key 门面</span><span class="badge">OpenAPI 3.0 + Swagger UI</span>
+            <span class="badge">Python / TypeScript SDK</span><span class="badge">入站 Webhook</span>
+            <span class="badge">幂等键</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l6">可观测</div>
+          <div class="lbody">
+            <span class="badge">仪表盘统计与趋势</span><span class="badge">Prometheus 指标</span>
+            <span class="badge">操作审计</span><span class="badge">环境 / Workspace 隔离</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="lname l7">底座</div>
+          <div class="lbody">
+            <span class="badge">PostgreSQL</span><span class="badge">Redis（生产队列）</span>
+            <span class="badge">Celery Worker（生产）</span><span class="badge">AES-256-CBC 加密存储</span>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>08</span></div>
+    </section>
+
+    <!-- ============ 09 能力01 数据集成 ============ -->
+    <section class="slide" data-nav="能力一：数据集成">
+      <div class="kicker">能力 01 / 数据集成</div>
+      <h1 class="sm">26 类连接器，一套接入方式</h1>
+      <p class="sub">不论对接的是数据库、开放接口、文件、SaaS 还是消息队列，登记、测连、探测表结构、配映射的流程完全一致。团队只需要学一次。</p>
+      <div class="grid g4" style="margin-bottom:16px">
+        <div class="card">
+          <h3>数据库 <span class="badge" style="margin-left:auto">8</span></h3>
+          <div class="chips tight" style="margin-top:8px">
+            <span class="badge">MySQL</span><span class="badge">PostgreSQL</span><span class="badge">Oracle</span>
+            <span class="badge">SQL Server</span><span class="badge">达梦</span><span class="badge">人大金仓</span>
+            <span class="badge">MongoDB</span><span class="badge">Elasticsearch</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>接口 <span class="badge" style="margin-left:auto">2</span></h3>
+          <div class="chips tight" style="margin-top:8px">
+            <span class="badge">HTTP / REST API</span><span class="badge">Webhook</span>
+          </div>
+          <p style="margin-top:10px">Webhook 既可作写入目标，也可按 URL 拉取作为抽取源。</p>
+        </div>
+        <div class="card">
+          <h3>文件 <span class="badge" style="margin-left:auto">4</span></h3>
+          <div class="chips tight" style="margin-top:8px">
+            <span class="badge">SFTP</span><span class="badge">FTP</span><span class="badge">S3 兼容存储</span><span class="badge">CSV / Excel</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>消息队列 <span class="badge" style="margin-left:auto">4</span></h3>
+          <div class="chips tight" style="margin-top:8px">
+            <span class="badge">Kafka</span><span class="badge">RabbitMQ</span><span class="badge">RocketMQ</span><span class="badge">Redis</span>
+          </div>
+          <p style="margin-top:10px">可作源或目标参与同步管道。</p>
+        </div>
+      </div>
+      <div class="grid g3">
+        <div class="card tint">
+          <h3><span class="dot"></span>全量与增量</h3>
+          <p>全量重刷，或按水位字段做增量过滤。SQL、MongoDB、Elasticsearch、HTTP 等按水位过滤后再抽取。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot g"></span>测连不造假</h3>
+          <p>连通性测试走协议级校验。未实现专用协议测试的类型，不会因为端口开着就返回成功——避免"配置看着对、上线才发现连不上"。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot"></span>一行 Key 交付</h3>
+          <p>运营在控制台创建的数据源与任务，可直接指派给某个集成商的密钥，对方立即可见可调用。</p>
+        </div>
+      </div>
+      <div class="note">另有 8 类 SaaS 连接器（LDAP / AD / SCIM / 钉钉 / 企微 / 飞书 / 用友 U8 / 纷享销客），详见下一页。</div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>09</span></div>
+    </section>
+
+    <!-- ============ 10 能力02 映射 ============ -->
+    <section class="slide" data-nav="能力二：字段映射与转换">
+      <div class="kicker">能力 02 / 映射与转换</div>
+      <h1 class="sm">把口径从代码里拿出来，放进可审计的配置</h1>
+      <p class="sub">映射规则是集成项目里最容易失控的部分。这里提供的是配置化、可预览、可复用的映射模型。</p>
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>映射与转换能力</h3>
+          <div class="chips" style="margin-top:10px">
+            <span class="badge blue">直接映射</span><span class="badge blue">类型转换</span>
+            <span class="badge blue">默认值填充</span><span class="badge blue">自定义表达式</span>
+            <span class="badge blue">状态码映射</span>
+          </div>
+          <p style="margin-top:12px">内置字符串处理（去空格、大小写、拼接、截取、替换）、编解码、数值与日期转换等常用转换，复杂场景可用自定义表达式。</p>
+          <div class="val">嵌套字段通过点号路径读写，不必为层级结构单独写适配代码。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot g"></span>预置同步模板</h3>
+          <p>内置 5 套用户同步模板，覆盖扁平字段、HR、AD 域、钉钉、企业微信等典型形态，包含字段对应关系与状态映射规则。</p>
+          <div class="chips" style="margin-top:12px">
+            <span class="badge green">通用用户同步</span><span class="badge green">HR → OA</span>
+            <span class="badge green">AD 域 → 业务系统</span><span class="badge green">钉钉 → 业务系统</span>
+            <span class="badge green">企业微信 → 业务系统</span>
+          </div>
+          <div class="val">价值：常规同步场景不必从零配映射，直接套模板再按需覆盖。</div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card tint">
+          <h3>落库之前先看结果</h3>
+          <p>映射预览会先用真实数据跑一遍转换，把"源字段 → 目标字段"的实际结果摊开给你确认，再进入正式写入。</p>
+          <div class="val">业务后果：口径错配在预览阶段就被拦住，而不是数据写坏之后才发现。</div>
+        </div>
+        <div class="card tint">
+          <h3>状态码不是字符串问题</h3>
+          <p>在职 / 离职 / 试用 / 禁用这类业务语义，用一组显式映射规则表达，而不是散落在各处的 if-else。</p>
+          <div class="val">业务后果：人员状态口径统一，下游系统不再各自解释。</div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>10</span></div>
+    </section>
+
+    <!-- ============ 11 能力03 执行引擎 ============ -->
+    <section class="slide" data-nav="能力三：执行引擎与可靠性">
+      <div class="kicker">能力 03 / 执行引擎</div>
+      <h1 class="sm">失败不是异常情况，是常态——所以我们按常态设计</h1>
+      <p class="sub">集成方案能不能托付，看的不是成功路径跑多快，而是失败之后能不能定位、能不能恢复、能不能追溯。</p>
+      <div class="grid g3" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>可编排：DAG 多步任务</h3>
+          <p>一个任务可拆成多个步骤，用依赖关系声明先后顺序，在任务页用画布完成编排；运行后在执行监控里逐步查看状态。</p>
+          <div class="val">价值：复杂同步不再塞进一个巨型脚本。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot w"></span>可恢复：死信与人工决裁</h3>
+          <p>失败数据进入死信区并做脱敏处理。可原样重处理、可忽略，也可以修正字段后重新落库。</p>
+          <div class="val">价值：坏数据不再只能靠人工补数。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot g"></span>可追溯：快照与字段审计</h3>
+          <p>保留版本快照，可按需回滚；字段级变更留痕，能回答"这个值是谁、什么时候改的"。</p>
+          <div class="val">价值：数据被改坏时可回退，责任可界定。</div>
+        </div>
+      </div>
+      <div class="grid g3">
+        <div class="card tint">
+          <h3>不把空跑当成功</h3>
+          <p>抽取 0 行不会被记成一次成功执行。静默的数据断流会被暴露出来。</p>
+        </div>
+        <div class="card tint">
+          <h3>重试与回执</h3>
+          <p>可配置失败重试次数与间隔；任务完成可回调通知业务系统，不必轮询。</p>
+        </div>
+        <div class="card tint">
+          <h3>防回环</h3>
+          <p>双向同步场景下携带来源标记与跳数控制，避免数据在两个系统之间无限反弹。</p>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>11</span></div>
+    </section>
+
+    <!-- ============ 12 能力04 SSO ============ -->
+    <section class="slide" data-nav="能力四：身份与应用集成">
+      <div class="kicker">能力 04 / 身份与应用集成</div>
+      <h1 class="sm">一次登录，跨系统通行</h1>
+      <p class="sub">把应用纳管进中台，由中台统一签发身份凭证，业务系统之间不再各自维护一套账号体系。</p>
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>统一登录与跨系统跳转</h3>
+          <p>支持 JWT 与 Ticket 两种凭证形态，"来源系统 → 中台 → 目标系统"三段式免登跳转，目标系统只需实现一次凭证校验。</p>
+          <div class="val">业务后果：用户不再为跳转系统重复输密码，体验与安全同时改善。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>标准协议双支持</h3>
+          <p>既支持 OAuth2 授权码 + PKCE，也支持 SAML 单点登录；平台自身同时可作为授权服务器对外提供授权能力。</p>
+          <div class="val">业务后果：新老系统都能纳入同一登录体系，不必为协议差异做取舍。</div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card tint">
+          <h3><span class="dot g"></span>SAML 不放过未签名断言</h3>
+          <p>接入 SAML 需要配置 IdP 证书，ACS 环节强制校验 XML 数字签名。未签名的断言会被直接拒绝，同时校验响应关联性、受众与有效期后才建立会话。</p>
+          <div class="val">价值：这是安全团队会重点追问的一条，建议在演示时现场打开配置项。</div>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot g"></span>会话可看、可吊销、可审计</h3>
+          <p>提供活跃会话列表与吊销操作，登录行为进入审计日志。</p>
+          <div class="val">业务后果：账号异常时有处置手段，事后有记录可查。</div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>12</span></div>
+    </section>
+
+    <!-- ============ 13 能力05 组织同步 ============ -->
+    <section class="slide" data-nav="能力五：组织与用户同步">
+      <div class="kicker">能力 05 / 组织与用户同步</div>
+      <h1 class="sm">把人理顺：从通讯录到部门树</h1>
+      <p class="sub">组织数据是所有权限体系的地基。中台把"从各平台拉通讯录、还原成部门树、再同步到业务系统"变成一条可重复执行的任务。</p>
+      <div class="grid g3" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>多来源拉取</h3>
+          <p>可从钉钉、企业微信、AD 域、LDAP 拉取用户与部门。既可作为独立的通讯录同步任务，也可作为普通数据同步任务的抽取源。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>部门树还原</h3>
+          <p>同步结果落成部门层级与"人-部门"关系，可按任务查询完整组织树，供下游系统直接消费。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>模板化 + 状态映射</h3>
+          <p>5 套预置模板覆盖典型场景；人员状态（在职、离职、试用期、禁用）通过显式规则映射。</p>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card tint">
+          <h3><span class="dot g"></span>敏感字段脱敏</h3>
+          <p>支持多种脱敏规则，并能按字段名称智能识别手机号、证件号、银行卡等敏感项。</p>
+          <div class="val">价值：组织数据常含个人信息，脱敏可在任务层统一策略，而不是靠各系统自觉。</div>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot g"></span>入职离职自动流转</h3>
+          <p>状态变化随同步自动落到下游系统，减少"人走了账号还在"的残留。</p>
+          <div class="val">业务后果：账号生命周期与人事流程对齐，降低合规风险。</div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>13</span></div>
+    </section>
+
+    <!-- ============ 14 能力06 开放服务 ============ -->
+    <section class="slide" data-nav="能力六：开放服务门面">
+      <div class="kicker">能力 06 / 开放服务</div>
+      <h1 class="sm">把集成能力变成一把可以发放的钥匙</h1>
+      <p class="sub">这是本产品在设计上最有辨识度的一点：集成能力不是只能由内部团队使用，而是可以标准化地交付给外部集成商。</p>
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>自助开通 + 受控授权</h3>
+          <p>集成商可通过公开接口自助开通沙箱密钥；正式资源由运营在控制台登记后指派。密钥完整值只返回一次。</p>
+          <div class="chips" style="margin-top:11px">
+            <span class="badge">IP 白名单</span><span class="badge">每分钟限流</span>
+            <span class="badge">失败告警邮箱 / Webhook</span><span class="badge">密钥轮换与吊销</span>
+          </div>
+          <div class="val">业务后果：生态接入从"一个对接项目"降级为"发一个 Key"。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>可见性边界清晰</h3>
+          <p>密钥只能访问"本凭证创建的"与"运营明确指派给它的"应用、数据源、任务与执行记录。未指派的控制台资产对密钥不可见。</p>
+          <div class="val">业务后果：多集成商可共享一套中台，而业务数据互不可见。</div>
+        </div>
+      </div>
+      <div class="grid g3">
+        <div class="card tint">
+          <h3>对接成本低</h3>
+          <p>提供 OpenAPI 3.0 规范与 Swagger UI，可直接生成客户端；官方 Python 与 TypeScript SDK 开箱可用。</p>
+        </div>
+        <div class="card tint">
+          <h3>入口双向</h3>
+          <p>既能主动调用中台能力，也能通过入站 Webhook 把数据推进来。</p>
+        </div>
+        <div class="card tint">
+          <h3>重放安全</h3>
+          <p>支持幂等键，网络重试不会造成数据重复写入。</p>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:18px">
+        <div class="txt"><strong>演示建议：</strong>现场用一段脚本完成"自助开通密钥 → 登记数据源 → 触发同步 → 查看执行记录"的闭环，比逐条讲接口更有说服力。</div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>14</span></div>
+    </section>
+
+    <!-- ============ 15 能力07 可观测 ============ -->
+    <section class="slide" data-nav="能力七：可观测与治理">
+      <div class="kicker">能力 07 / 可观测与治理</div>
+      <h1 class="sm">看得见，才敢把生产数据托付出去</h1>
+      <p class="sub">集成中台处在数据链路的关键位置，它的可观测性直接决定团队敢不敢用它承载核心数据。</p>
+      <div class="grid g4" style="margin-bottom:16px">
+        <div class="card">
+          <h3><span class="dot"></span>仪表盘</h3>
+          <p>汇总统计与执行趋势，任务健康度一眼可见。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>标准指标</h3>
+          <p>提供 Prometheus 格式指标接口，可接入你现有的监控与告警体系，不必另建一套。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>操作审计</h3>
+          <p>增删改操作全部留痕，配合字段级变更审计形成完整链路。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>多环境隔离</h3>
+          <p>区分开发 / 预发 / 生产环境，并支持按 Workspace 维度隔离，请求维度即可切换。</p>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card tint">
+          <h3>执行记录不是一行日志</h3>
+          <p>每条执行记录包含状态、耗时、影响行数与失败原因；DAG 任务可下钻到每个步骤的状态。</p>
+          <div class="val">价值：排障从"翻日志猜原因"变成"看记录定位步骤"。</div>
+        </div>
+        <div class="card tint">
+          <h3>告警走你已有的通道</h3>
+          <p>任务失败可配置邮件告警；密钥层面还可配置失败通知的邮箱或 Webhook。</p>
+          <div class="val">价值：不需要为了这个系统新建一套运维流程。</div>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>15</span></div>
+    </section>
+
+    <!-- ============ 16 安全 ============ -->
+    <section class="slide" data-nav="安全与合规">
+      <div class="kicker">Security</div>
+      <h1 class="sm">安全能力清单（可直接交给安全团队评审）</h1>
+      <p class="sub">这一页按安全评审的常见提问顺序组织。每一条都对应产品中已实现的机制，不是路线图。</p>
+      <table>
+        <thead>
+          <tr><th style="width:190px">评审维度</th><th>实现方式</th><th style="width:300px">说明</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>凭据存储</strong></td>
+            <td>数据源密码等敏感字段使用 AES-256-CBC 加密后落库</td>
+            <td>数据库中不出现明文凭据</td>
+          </tr>
+          <tr>
+            <td><strong>账号密码</strong></td>
+            <td>bcrypt 哈希存储；创建与改密强制强度校验（长度、字符组合、禁用弱密码）</td>
+            <td>登录环节不套用该强度策略，避免锁定历史账号</td>
+          </tr>
+          <tr>
+            <td><strong>暴力破解防护</strong></td>
+            <td>登录失败按来源 IP 限流（每分钟 5 次）</td>
+            <td>与 API Key 的每分钟限流相互独立</td>
+          </tr>
+          <tr>
+            <td><strong>会话与令牌</strong></td>
+            <td>访问令牌 8 小时、刷新令牌 7 天；会话列表支持主动吊销</td>
+            <td>异常登录可即时处置</td>
+          </tr>
+          <tr>
+            <td><strong>权限模型</strong></td>
+            <td>基于角色的访问控制（RBAC），角色与权限可维护</td>
+            <td>控制台操作与密钥调用两套边界分别管控</td>
+          </tr>
+          <tr>
+            <td><strong>接口鉴权</strong></td>
+            <td>控制台走 JWT；开放服务走 API Key，支持 IP 白名单与限流</td>
+            <td>对外能力可按集成商粒度收敛</td>
+          </tr>
+          <tr>
+            <td><strong>单点登录安全</strong></td>
+            <td>SAML 强制 IdP 证书并校验 XML 数字签名，未签名断言拒绝</td>
+            <td>同时校验响应关联性、受众与有效期</td>
+          </tr>
+          <tr>
+            <td><strong>审计追溯</strong></td>
+            <td>增删改操作审计 + 字段级变更审计 + 登录审计</td>
+            <td>满足事后责任界定需要</td>
+          </tr>
+          <tr>
+            <td><strong>注入防护</strong></td>
+            <td>数据访问层统一使用参数化查询</td>
+            <td>业务代码不拼接 SQL 字符串</td>
+          </tr>
+          <tr>
+            <td><strong>传输加密</strong></td>
+            <td>生产环境部署于 HTTPS 之下</td>
+            <td>由部署环节保障，不依赖应用层自行实现</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>16</span></div>
+    </section>
+
+    <!-- ============ 17 章节三 ============ -->
+    <section class="slide sec" data-nav="第三章 · 落地">
+      <div class="big">03</div>
+      <h1>怎么落到你的环境里</h1>
+      <div class="rule"></div>
+      <p class="sub">能力清单可以慢慢看，但落地路径必须在第一次沟通里说清楚——否则技术好也推不动。</p>
+      <div class="foot"><span class="brand">03 / 落地路径</span><span>17</span></div>
+    </section>
+
+    <!-- ============ 18 效率对比 ============ -->
+    <section class="slide" data-nav="交付效率对比">
+      <div class="kicker">交付节奏</div>
+      <h1 class="sm">一条新的同步链路，时间花在哪里</h1>
+      <p class="sub">下面是对同一条"系统 A 同步到系统 B"链路两种做法的工序拆解。差别集中在：接口开发与联调测试这两段是否还存在。</p>
+      <div class="tl" style="margin-top:6px">
+        <div class="tlrow">
+          <div class="lbl">手工点对点</div>
+          <div class="track">
+            <div class="seg a" style="width:20%">需求确认 3d</div>
+            <div class="seg b" style="width:33%">接口开发 5d</div>
+            <div class="seg c" style="width:33%">双方联调测试 5d</div>
+            <div class="seg d" style="width:14%">上线验证 2d</div>
+          </div>
+          <div class="tot">≈15 人日</div>
+        </div>
+        <div class="tlrow">
+          <div class="lbl">中台配置化</div>
+          <div class="track">
+            <div class="seg p" style="width:25%">登记数据源 0.5d</div>
+            <div class="seg q" style="width:25%">配置映射 0.5d</div>
+            <div class="seg r" style="width:25%">预览试跑 0.5d</div>
+            <div class="seg s" style="width:25%">调度与告警 0.5d</div>
+          </div>
+          <div class="tot">≈2 人日</div>
+        </div>
+      </div>
+      <div class="grid g3" style="margin-top:22px">
+        <div class="card tint">
+          <h3><span class="dot"></span>差在哪</h3>
+          <p>连接器复用与映射配置化，取代了为每条链路单独写接口代码。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot"></span>边际成本递减</h3>
+          <p>第 1 条链路需要学习成本；从第 2 条开始，工序完全重复。</p>
+        </div>
+        <div class="card tint">
+          <h3><span class="dot w"></span>口径说明</h3>
+          <p>上述为基于工序构成的量级估算，实际取决于环境复杂度与数据质量，不作为交付承诺。建议在 POC 中用你们自己的真实数据校准。</p>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>18</span></div>
+    </section>
+
+    <!-- ============ 19 角色 ============ -->
+    <section class="slide" data-nav="不同角色各拿到什么">
+      <div class="kicker">价值映射</div>
+      <h1 class="sm">同一套产品，四类人各拿到不同的东西</h1>
+      <p class="sub">技术评估通常涉及多个角色。这一页可以直接用于对齐不同部门关心的点。</p>
+      <div class="grid g4">
+        <div class="card">
+          <h3><span class="dot"></span>集成商 / 生态伙伴</h3>
+          <p>用一把 API Key 就能接入应用、数据、消息与身份能力。</p>
+          <div class="val">拿到：更短的上线周期，更少的对接沟通成本。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot g"></span>IT 运维</h3>
+          <p>统一的执行监控、死信处理入口、会话吊销与告警配置。</p>
+          <div class="val">拿到：一个控制台管住所有链路，故障有处置手段。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>数据工程</h3>
+          <p>映射配置化、增量水位、DAG 编排、快照回滚与字段审计。</p>
+          <div class="val">拿到：不再为每条链路重复开发，口径集中可维护。</div>
+        </div>
+        <div class="card">
+          <h3><span class="dot r"></span>安全与合规</h3>
+          <p>凭据加密存储、登录限流、RBAC、SAML 签名校验、全量审计。</p>
+          <div class="val">拿到：有清单可评审，有记录可追溯。</div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:22px">
+        <div class="txt"><strong>沟通提示：</strong>如果会议室里同时有这四类人，建议先讲第 5 页的代价，再按各自视角挑选第 9 至 16 页中的两到三页详讲，其余快速带过。全量通讲通常会在第 40 分钟失去注意力。</div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>19</span></div>
+    </section>
+
+    <!-- ============ 20 落地路径 ============ -->
+    <section class="slide" data-nav="落地路径与部署">
+      <div class="kicker">Getting Started</div>
+      <h1 class="sm">四步上线，每一步都有可见产出</h1>
+      <p class="sub">每个阶段结束时都应有一个可以拿给评审人看的实物，而不是"进度 60%"。</p>
+      <div class="steps">
+        <div class="step">
+          <div class="idx">1</div>
+          <h3>环境就绪</h3>
+          <ul>
+            <li>部署数据库与应用服务</li>
+            <li>控制台指向业务接口地址</li>
+            <li>生产环境切换为分布式队列</li>
+            <li>配置密钥与告警通道</li>
+          </ul>
+          <div class="val" style="margin-top:12px;font-size:12px;color:var(--primary-700)">产出：可登录的控制台</div>
+        </div>
+        <div class="step">
+          <div class="idx">2</div>
+          <h3>接入数据源</h3>
+          <ul>
+            <li>登记源与目标数据源</li>
+            <li>执行连通性测试</li>
+            <li>探测表结构与样例数据</li>
+            <li>按需安装对应驱动</li>
+          </ul>
+          <div class="val" style="margin-top:12px;font-size:12px;color:var(--primary-700)">产出：测连通过的数据源清单</div>
+        </div>
+        <div class="step">
+          <div class="idx">3</div>
+          <h3>配任务并试跑</h3>
+          <ul>
+            <li>套用模板或自定义映射</li>
+            <li>执行映射预览确认口径</li>
+            <li>手动触发一次真实同步</li>
+            <li>查看执行记录与结果行数</li>
+          </ul>
+          <div class="val" style="margin-top:12px;font-size:12px;color:var(--primary-700)">产出：一次成功执行记录</div>
+        </div>
+        <div class="step">
+          <div class="idx">4</div>
+          <h3>调度与交付</h3>
+          <ul>
+            <li>设定 Cron 或事件触发</li>
+            <li>配置重试、回执与告警</li>
+            <li>为集成商发放密钥并指派资源</li>
+            <li>接入监控指标</li>
+          </ul>
+          <div class="val" style="margin-top:12px;font-size:12px;color:var(--primary-700)">产出：无人值守运行的链路</div>
+        </div>
+      </div>
+      <div class="grid g2" style="margin-top:26px">
+        <div class="card tint">
+          <h3>开发与生产的差异</h3>
+          <p>开发环境使用进程内队列即可满足验证需要；生产环境切换为基于消息中间件的分布式队列，配合多进程部署避免任务重复派发。</p>
+        </div>
+        <div class="card tint">
+          <h3>驱动按需安装</h3>
+          <p>Oracle、SQL Server、MongoDB、SFTP、S3、LDAP、Excel 等连接器所需的驱动与基础依赖分开管理，按实际接入类型安装，不污染基础部署。</p>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>20</span></div>
+    </section>
+
+    <!-- ============ 21 下一步 ============ -->
+    <section class="slide" data-nav="下一步">
+      <div class="kicker">Next Step</div>
+      <h1 class="sm">建议的下一步：把验证标准先写下来</h1>
+      <p class="sub">一次定向演示只能建立信心，真正的决策依据来自你们自己数据上的验证结果。</p>
+      <div class="grid g3" style="margin-bottom:20px">
+        <div class="card">
+          <h3><span class="dot"></span>第一步 · 技术对齐（约 30 分钟）</h3>
+          <p>确认你们的环境组成、必须打通的系统清单、安全评审要求与关键角色。会后产出一份定向演示脚本。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>第二步 · 定向演示（约 45 分钟）</h3>
+          <p>围绕你们指定的两到三条真实链路演示，包含一次刻意制造的失败与恢复过程。</p>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>第三步 · 小范围验证（2–3 周）</h3>
+          <p>选定一条真实链路，在开始前书面确认通过/不通过的标准、时间点与决策人。</p>
+        </div>
+      </div>
+      <div class="callout warn">
+        <div class="txt"><strong>我们主动提醒：</strong>验证范围要克制。聚焦一条链路做到结论明确，比铺开五条链路后得到一个模糊结论有价值得多。范围外的新需求建议放进第二阶段。</div>
+      </div>
+      <div class="grid g2" style="margin-top:20px">
+        <div class="card tint">
+          <h3>本次沟通不涉及</h3>
+          <p>以下方向目前在产品中尚未落地，本次不作为能力介绍：变更数据捕获（CDC / binlog 级实时同步）、Kubernetes 编排与自动扩缩容、超大规模文件批量传输、对外 SLA 状态页与按行计费。</p>
+        </div>
+        <div class="card tint">
+          <h3>本次沟通已覆盖</h3>
+          <p>26 类连接器、ETL 与 DAG 编排、死信与快照回滚、字段级审计、SSO 四种协议、组织同步、开放 API 门面、Prometheus 指标与全量审计。</p>
+        </div>
+      </div>
+      <div class="foot"><span class="brand">集成中台 · 产品介绍</span><span>21</span></div>
+    </section>
+
+  </div>
+</div>
+
+<div class="hud"><div class="bar" id="bar"></div></div>
+<div class="pagenum" id="pagenum">01 / 21</div>
+<div class="ctrl">
+  <button id="btnMenu" title="目录 (M)">目录</button>
+  <button id="btnPrev" title="上一页 (←)">上一页</button>
+  <span class="count" id="count">1 / 21</span>
+  <button id="btnNext" title="下一页 (→)">下一页</button>
+  <button id="btnPrint" title="导出 PDF (P)">导出</button>
+</div>
+
+<div class="menu" id="menu">
+  <h4>目录 · 点击跳转</h4>
+  <ol id="menuList"></ol>
+  <div class="hint">快捷键：← → 翻页 · M 目录 · Home / End 首末页 · P 导出 PDF</div>
+</div>
+
+<script>
+(function(){
+  var stage = document.getElementById('stage');
+  var viewport = document.getElementById('viewport');
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total = slides.length;
+  var idx = 0;
+
+  /* ---- build menu ---- */
+  var list = document.getElementById('menuList');
+  slides.forEach(function(s, i){
+    var li = document.createElement('li');
+    var isSec = s.classList.contains('sec');
+    if (isSec) li.className = 'sec-item';
+    li.innerHTML = '<span class="no">' + String(i+1).padStart(2,'0') + '</span><span>' +
+                   (s.getAttribute('data-nav') || ('第 ' + (i+1) + ' 页')) + '</span>';
+    li.addEventListener('click', function(){ go(i); closeMenu(); });
+    list.appendChild(li);
+  });
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+
+  function render(){
+    slides.forEach(function(s, i){ s.classList.toggle('active', i === idx); });
+    document.getElementById('count').textContent = (idx+1) + ' / ' + total;
+    document.getElementById('pagenum').textContent = pad(idx+1) + ' / ' + pad(total);
+    document.getElementById('bar').style.width = ((idx+1) / total * 100) + '%';
+    if (history.replaceState) history.replaceState(null, '', '#' + (idx+1));
+  }
+
+  function go(n){
+    idx = Math.max(0, Math.min(total - 1, n));
+    render();
+  }
+  function next(){ go(idx + 1); }
+  function prev(){ go(idx - 1); }
+
+  /* ---- fit to viewport ---- */
+  function fit(){
+    var s = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.93;
+    stage.style.transform = 'scale(' + s + ')';
+  }
+  window.addEventListener('resize', fit);
+
+  /* ---- menu ---- */
+  var menu = document.getElementById('menu');
+  function openMenu(){ menu.classList.add('open'); }
+  function closeMenu(){ menu.classList.remove('open'); }
+  function toggleMenu(){ menu.classList.contains('open') ? closeMenu() : openMenu(); }
+
+  /* ---- controls ---- */
+  document.getElementById('btnNext').addEventListener('click', next);
+  document.getElementById('btnPrev').addEventListener('click', prev);
+  document.getElementById('btnMenu').addEventListener('click', toggleMenu);
+  document.getElementById('btnPrint').addEventListener('click', function(){ window.print(); });
+  document.getElementById('bar').parentElement.addEventListener('click', function(e){
+    var r = this.getBoundingClientRect();
+    go(Math.floor((e.clientX - r.left) / r.width * total));
+  });
+
+  /* ---- keyboard ---- */
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown'){ e.preventDefault(); if(!menu.classList.contains('open')) next(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp'){ e.preventDefault(); if(!menu.classList.contains('open')) prev(); }
+    else if (e.key === 'Home'){ e.preventDefault(); go(0); }
+    else if (e.key === 'End'){ e.preventDefault(); go(total - 1); }
+    else if (e.key === 'Escape'){ closeMenu(); }
+    else if (e.key === 'm' || e.key === 'M'){ toggleMenu(); }
+    else if (e.key === 'p' || e.key === 'P'){ window.print(); }
+  });
+
+  /* ---- touch swipe ---- */
+  var sx = 0, sy = 0;
+  viewport.addEventListener('touchstart', function(e){ sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, {passive:true});
+  viewport.addEventListener('touchend', function(e){
+    var dx = e.changedTouches[0].clientX - sx;
+    var dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) { dx < 0 ? next() : prev(); }
+  }, {passive:true});
+
+  /* ---- init ---- */
+  var start = parseInt((location.hash || '').replace('#',''), 10);
+  fit();
+  go(isNaN(start) ? 0 : start - 1);
+})();
+</script>
+</body>
+</html>

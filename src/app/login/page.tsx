@@ -1,37 +1,62 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { validateLoginForm } from '@/lib/login-form';
+import { safeRedirectPath } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { GitBranch, Loader2 } from 'lucide-react';
+import { GitBranch, Loader2, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      const from = typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('from')
+        : null;
+      router.replace(safeRedirectPath(from));
+    }
+  }, [authLoading, user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || !password) {
+    const nextErrors = validateLoginForm(username, password);
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
       toast.error('请输入用户名和密码');
       return;
     }
-
+    setErrors({});
     setLoading(true);
     try {
       await login(username, password);
       toast.success('登录成功');
     } catch (error) {
-      toast.error((error as Error).message);
+      toast.error((error as Error).message || '登录失败');
     } finally {
       setLoading(false);
     }
   };
+
+  if (authLoading || user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
@@ -60,18 +85,34 @@ export default function LoginPage() {
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="请输入用户名"
                   autoComplete="username"
+                  autoFocus
+                  className={errors.username ? 'border-destructive' : ''}
                 />
+                {errors.username && <p className="text-xs text-destructive">{errors.username}</p>}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">密码</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="请输入密码"
-                  autoComplete="current-password"
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="请输入密码"
+                    autoComplete="current-password"
+                    className={errors.password ? 'border-destructive pr-9' : 'pr-9'}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    onClick={() => setShowPassword((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? (

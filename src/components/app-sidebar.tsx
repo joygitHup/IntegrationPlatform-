@@ -16,17 +16,46 @@ import {
   ChevronsRight,
   Grid3X3,
   History,
+  KeyRound,
+  Loader2,
+  Plug,
+  Network,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
+import { roleLabel } from '@/lib/user-form';
+import { validateChangePasswordForm } from '@/lib/login-form';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useState } from 'react';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface SidebarItem {
   label: string;
   href: string;
   icon: typeof LayoutDashboard;
   permission?: string;
+  /** 仅平台账号可见（clientId 为空）；SaaS 租户用户隐藏 */
+  platformOnly?: boolean;
 }
 
 const navItems: SidebarItem[] = [
@@ -34,9 +63,11 @@ const navItems: SidebarItem[] = [
   { label: '应用门户', href: '/apps', icon: Grid3X3 },
   { label: '数据源管理', href: '/datasources', icon: Database, permission: 'datasource:read' },
   { label: '集成任务', href: '/jobs', icon: GitBranch, permission: 'job:read' },
+  { label: '组织架构', href: '/org', icon: Network, permission: 'job:read' },
   { label: '执行监控', href: '/executions', icon: Activity, permission: 'execution:read' },
   { label: '死信队列', href: '/dead-letters', icon: AlertTriangle, permission: 'dlq:read' },
   { label: '应用管理', href: '/apps/manage', icon: Settings, permission: 'app:read' },
+  { label: '开放服务', href: '/open', icon: Plug, permission: 'open:manage', platformOnly: true },
   { label: '登录日志', href: '/sso-logs', icon: FileText, permission: 'app:read' },
   { label: '用户管理', href: '/users', icon: Users, permission: 'user:read' },
   { label: '审计日志', href: '/audit-logs', icon: History, permission: 'audit:read' },
@@ -44,12 +75,48 @@ const navItems: SidebarItem[] = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { user, logout, hasPermission } = useAuth();
+  const { user, logout, changePassword, hasPermission } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdForm, setPwdForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwdErrors, setPwdErrors] = useState<Record<string, string>>({});
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
 
+  const isPlatform = !user?.clientId;
   const visibleItems = navItems.filter(
-    (item) => !item.permission || hasPermission(item.permission),
+    (item) =>
+      (!item.permission || hasPermission(item.permission)) &&
+      (!item.platformOnly || isPlatform),
   );
+
+  const handleLogout = async () => {
+    setLogoutOpen(false);
+    await logout();
+  };
+
+  const handleChangePassword = async () => {
+    const errors = validateChangePasswordForm({ ...pwdForm, username: user?.username });
+    if (Object.keys(errors).length > 0) {
+      setPwdErrors(errors);
+      return;
+    }
+    setPwdSubmitting(true);
+    try {
+      await changePassword(pwdForm.oldPassword, pwdForm.newPassword);
+      toast.success('密码已更新');
+      setPwdOpen(false);
+      setPwdForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      setPwdErrors({});
+    } catch (error) {
+      toast.error((error as Error).message || '修改失败');
+    } finally {
+      setPwdSubmitting(false);
+    }
+  };
+
+  const displayName = user?.displayName || user?.username || '';
+  const roleText = roleLabel(user?.roleCode, user?.roleName);
 
   return (
     <aside
@@ -113,19 +180,32 @@ export function AppSidebar() {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
-                {user?.username?.charAt(0).toUpperCase()}
+                {displayName.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{user?.username}</p>
-                <p className="truncate text-xs text-muted-foreground">{user?.roleId}</p>
+                <p className="truncate text-sm font-medium">{displayName}</p>
+                <p className="truncate text-xs text-muted-foreground">{roleText}</p>
               </div>
             </div>
             <div className="flex gap-1">
               <Button
                 variant="ghost"
                 size="sm"
+                className="flex-1 justify-start px-2"
+                onClick={() => {
+                  setPwdForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
+                  setPwdErrors({});
+                  setPwdOpen(true);
+                }}
+              >
+                <KeyRound className="mr-2 h-4 w-4" />
+                改密
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 className="flex-1 justify-start px-2 text-destructive hover:text-destructive"
-                onClick={logout}
+                onClick={() => setLogoutOpen(true)}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 退出
@@ -152,6 +232,68 @@ export function AppSidebar() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={logoutOpen} onOpenChange={setLogoutOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认退出</AlertDialogTitle>
+            <AlertDialogDescription>退出后需要重新登录才能访问管理后台。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogout}>退出登录</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={pwdOpen} onOpenChange={(o) => !pwdSubmitting && setPwdOpen(o)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>修改密码</DialogTitle>
+            <DialogDescription>请输入原密码并设置新密码</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-2">
+              <Label>原密码</Label>
+              <Input
+                type="password"
+                value={pwdForm.oldPassword}
+                onChange={(e) => setPwdForm({ ...pwdForm, oldPassword: e.target.value })}
+                className={pwdErrors.oldPassword ? 'border-destructive' : ''}
+              />
+              {pwdErrors.oldPassword && <p className="text-xs text-destructive">{pwdErrors.oldPassword}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>新密码</Label>
+              <Input
+                type="password"
+                value={pwdForm.newPassword}
+                onChange={(e) => setPwdForm({ ...pwdForm, newPassword: e.target.value })}
+                placeholder="至少 8 位，须含字母和数字"
+                className={pwdErrors.newPassword ? 'border-destructive' : ''}
+              />
+              {pwdErrors.newPassword && <p className="text-xs text-destructive">{pwdErrors.newPassword}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>确认新密码</Label>
+              <Input
+                type="password"
+                value={pwdForm.confirmPassword}
+                onChange={(e) => setPwdForm({ ...pwdForm, confirmPassword: e.target.value })}
+                className={pwdErrors.confirmPassword ? 'border-destructive' : ''}
+              />
+              {pwdErrors.confirmPassword && <p className="text-xs text-destructive">{pwdErrors.confirmPassword}</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwdOpen(false)} disabled={pwdSubmitting}>取消</Button>
+            <Button onClick={handleChangePassword} disabled={pwdSubmitting}>
+              {pwdSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

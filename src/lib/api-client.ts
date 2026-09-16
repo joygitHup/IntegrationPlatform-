@@ -1,13 +1,17 @@
 'use client';
 
-const BASE_URL = '/api';
+// 推荐 NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000/api/v1；后端 /api/v1/ 与 /api/ 等价（历史兼容）
+// 未设时同源 /api 反代到 Django（仍可用，但建议显式带上版本号 /api/v1）
+const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE || '/api').replace(/\/+$/, '');
 
 interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
+  _retry?: boolean;
 }
 
 class ApiClient {
   private token: string | null = null;
+  private refreshing: Promise<boolean> | null = null;
 
   setToken(token: string | null) {
     this.token = token;
@@ -24,6 +28,11 @@ class ApiClient {
     return localStorage.getItem('access_token');
   }
 
+  getRefreshToken(): string | null {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('refresh_token');
+  }
+
   clearToken() {
     this.token = null;
     if (typeof window !== 'undefined') {
@@ -32,8 +41,41 @@ class ApiClient {
     }
   }
 
-  async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+  private async tryRefresh(): Promise<boolean> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      const refreshToken = this.getRefreshToken();
+      if (!refreshToken) return false;
+      try {
+        const data = await this.request<{ accessToken: string; refreshToken: string }>(
+          '/auth/refresh',
+          {
+            method: 'POST',
+            skipAuth: true,
+            body: JSON.stringify({ refreshToken }),
+          },
+        );
+        if (!data?.accessToken) return false;
+        this.setToken(data.accessToken);
+        if (data.refreshToken) {
+          localStorage.setItem('refresh_token', data.refreshToken);
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    try {
+      return await this.refreshing;
+    } finally {
+      this.refreshing = null;
+    }
+  }
+
+    async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const normalizedPath = path.startsWith('http')
+      ? path
+      : `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
@@ -45,16 +87,39 @@ class ApiClient {
         headers['Authorization'] = `Bearer ${token}`;
       }
     }
+    const storedEnv =
+      typeof window !== 'undefined' ? window.localStorage.getItem('ip_env') || '' : '';
+    const env =
+      (storedEnv && storedEnv !== 'all' ? storedEnv : '') ||
+      process.env.NEXT_PUBLIC_ENVIRONMENT ||
+      'dev';
+    if (env) headers['X-Environment'] = env;
+    const workspace =
+      typeof window !== 'undefined' ? window.localStorage.getItem('ip_workspace') : '';
+    if (workspace) headers['X-Workspace-Id'] = workspace;
 
-    const response = await fetch(url, {
+    let requestUrl = normalizedPath;
+    const method = (options.method || 'GET').toUpperCase();
+    if (method === 'GET' && storedEnv && storedEnv !== 'all' && !normalizedPath.startsWith('http')) {
+      if (!/[?&]environment=/.test(normalizedPath)) {
+        requestUrl = `${normalizedPath}${normalizedPath.includes('?') ? '&' : '?'}environment=${encodeURIComponent(storedEnv)}`;
+      }
+    }
+
+    const response = await fetch(requestUrl, {
       ...options,
       headers,
     });
 
-    if (response.status === 401 && !options.skipAuth) {
+    if (response.status === 401 && !options.skipAuth && !options._retry) {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        return this.request<T>(path, { ...options, _retry: true });
+      }
       this.clearToken();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        const from = encodeURIComponent(window.location.pathname);
+        window.location.href = `/login?from=${from}`;
       }
       throw new Error('Unauthorized');
     }
@@ -62,6 +127,10 @@ class ApiClient {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      if (response.status === 429) {
+        const wait = response.headers.get('Retry-After');
+        throw new Error(data.error || (wait ? `请求过于频繁，请 ${wait} 秒后再试` : '请求过于频繁，请稍后再试'));
+      }
       throw new Error(data.error || `HTTP ${response.status}`);
     }
 
@@ -99,9 +168,12 @@ export const apiClient = new ApiClient();
 export const authApi = {
   login: (data: { username: string; password: string }) =>
     apiClient.post<{ accessToken: string; refreshToken: string; user: any }>('/auth/login', data, { skipAuth: true }),
+  logout: () => apiClient.post<{ success: boolean }>('/auth/logout'),
   me: () => apiClient.get<{ user: any }>('/auth/me'),
   refresh: (refreshToken: string) =>
     apiClient.post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken }, { skipAuth: true }),
+  changePassword: (data: { oldPassword: string; newPassword: string }) =>
+    apiClient.put<{ success: boolean }>('/auth/password', data),
 };
 
 // Users API
@@ -118,7 +190,11 @@ export const usersApi = {
 
 // Roles API
 export const rolesApi = {
-  list: () => apiClient.get<any[]>('/roles'),
+  list: () => apiClient.get<any>('/roles'),
+  create: (data: { code: string; name: string; description?: string; permissions?: string[]; status?: string }) =>
+    apiClient.post<any>('/roles', data),
+  update: (id: string, data: Record<string, unknown>) => apiClient.put<any>(`/roles/${id}`, data),
+  delete: (id: string) => apiClient.delete<any>(`/roles/${id}`),
 };
 
 // Datasources API
@@ -131,8 +207,10 @@ export const datasourcesApi = {
   get: (id: string) => apiClient.get<any>(`/datasources/${id}`),
   update: (id: string, data: any) => apiClient.put<any>(`/datasources/${id}`, data),
   delete: (id: string) => apiClient.delete<any>(`/datasources/${id}`),
-  test: (data: any) => apiClient.post<any>('/datasources/test', data),
+    test: (data: any) => apiClient.post<any>('/datasources/test', data),
   testById: (id: string) => apiClient.post<any>(`/datasources/test?id=${id}`),
+  inspect: (data: { id?: string; datasourceId?: string; table?: string }) =>
+    apiClient.post<any>('/datasources/inspect', data),
 };
 
 // Jobs API
@@ -148,6 +226,14 @@ export const jobsApi = {
   trigger: (jobId: string) => apiClient.post<any>('/jobs/trigger', { jobId }),
   control: (jobId: string, action: 'start' | 'stop' | 'pause') =>
     apiClient.post<any>('/jobs/control', { jobId, action }),
+  preview: (data: {
+    datasourceId: string;
+    table?: string;
+    sourceConfig?: Record<string, unknown>;
+    fieldMapping?: unknown[];
+    filterCondition?: string;
+    limit?: number;
+  }) => apiClient.post<any>('/jobs/preview', data),
 };
 
 // Executions API
@@ -165,10 +251,14 @@ export const deadLettersApi = {
     const query = new URLSearchParams(params).toString();
     return apiClient.get<any>(`/dead-letters${query ? `?${query}` : ''}`);
   },
-  batchAction: (ids: string[], action: 'reprocess' | 'ignore') =>
-    apiClient.post<any>('/dead-letters', { ids, action }),
+  get: (id: string, includeTarget = false) =>
+    apiClient.get<any>(`/dead-letters?id=${encodeURIComponent(id)}${includeTarget ? '&includeTarget=true' : ''}`),
+  batchAction: (ids: string[], action: 'reprocess' | 'ignore' | 'resolve', extra?: Record<string, unknown>) =>
+    apiClient.post<any>('/dead-letters', { ids, action, ...(extra || {}) }),
   retry: (id: string) => apiClient.post<any>('/dead-letters', { ids: [id], action: 'reprocess' }),
   delete: (id: string) => apiClient.post<any>('/dead-letters', { ids: [id], action: 'ignore' }),
+  resolve: (id: string, data: { payload?: Record<string, unknown>; winner?: string; execute?: boolean }) =>
+    apiClient.post<any>('/dead-letters', { ids: [id], action: 'resolve', execute: true, ...data }),
 };
 
 // Dashboard API
@@ -268,4 +358,87 @@ export const ssoSessionsApi = {
     apiClient.delete<any>(`/sso/sessions?sessionId=${sessionId}`),
   revokeAll: () =>
     apiClient.delete<any>('/sso/sessions?all=true'),
+};
+
+export const openApi = {
+  catalog: () => apiClient.get<any>('/open/catalog'),
+  connectors: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/open/connectors${query ? `?${query}` : ''}`);
+  },
+  templates: () => apiClient.get<any>('/open/templates'),
+  clients: {
+    list: () => apiClient.get<any>('/open/clients'),
+    create: (data: {
+      name: string;
+      code: string;
+      description?: string;
+      scopes?: string[];
+      ipWhitelist?: string[];
+      rateLimitPerMinute?: number;
+      monthlyCallQuota?: number;
+      monthlyRowQuota?: number;
+      sandbox?: boolean;
+      alertEmail?: string;
+      alertWebhookUrl?: string;
+      callbackUrl?: string;
+    }) => apiClient.post<any>('/open/clients', data),
+    update: (id: string, data: Record<string, unknown>) =>
+      apiClient.put<any>(`/open/clients?id=${id}`, data),
+    rotate: (id: string) => apiClient.post<any>('/open/clients/rotate', { id }),
+    delete: (id: string) => apiClient.delete<any>(`/open/clients?id=${id}`),
+  },
+  identity: {
+    pull: (data: { datasourceId: string; jobId?: string; syncOrg?: boolean; executeJob?: boolean }) =>
+      apiClient.post<any>('/open/identity/pull', data),
+  },
+  rollback: (data: { jobId: string; snapshotId?: string; execute?: boolean }) =>
+    apiClient.post<any>('/open/jobs/rollback', data),
+  usage: (clientId?: string) =>
+    apiClient.get<any>(`/open/usage${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`),
+  status: () => apiClient.get<any>('/open/status'),
+  errors: () => apiClient.get<any>('/open/errors'),
+  changelog: () => apiClient.get<any>('/open/changelog'),
+  workspaces: (clientId?: string) =>
+    apiClient.get<any>(`/open/workspaces${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`),
+  createWorkspace: (data: { name: string; code: string; clientId?: string; environment?: string }) =>
+    apiClient.post<any>('/open/workspaces', data),
+  promote: (data: { jobId: string; targetEnvironment?: string }) =>
+    apiClient.post<any>('/open/jobs/promote', data),
+  register: (data: { name: string; code: string; description?: string; inviteCode?: string }) =>
+    apiClient.post<any>('/open/register', data),
+  sdk: () => apiClient.get<any>('/open/sdk'),
+};
+
+export const snapshotsApi = {
+  list: (jobId: string) => apiClient.get<any>(`/version-snapshots?jobId=${encodeURIComponent(jobId)}`),
+  rollback: (data: { jobId: string; snapshotId?: string; targetVersion?: number; execute?: boolean }) =>
+    apiClient.post<any>('/version-snapshots', data),
+};
+
+export const workflowsApi = {
+  list: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/workflows${query ? `?${query}` : ''}`);
+  },
+  get: (id: string) => apiClient.get<any>(`/workflows?id=${encodeURIComponent(id)}`),
+};
+
+export const orgDepartmentsApi = {
+  tree: (jobId: string) =>
+    apiClient.get<any>(`/org-departments?jobId=${encodeURIComponent(jobId)}&tree=true`),
+  list: (jobId: string) =>
+    apiClient.get<any>(`/org-departments?jobId=${encodeURIComponent(jobId)}`),
+  users: (jobId: string, deptSourceId: string, includeSub = true) =>
+    apiClient.get<any>(
+      `/org-departments?jobId=${encodeURIComponent(jobId)}&users=${encodeURIComponent(deptSourceId)}${includeSub ? '&includeSub=true' : ''}`,
+    ),
+};
+
+export const fieldAuditApi = {
+  list: (params?: Record<string, any>) => {
+    const query = new URLSearchParams(params as any).toString();
+    return apiClient.get<any>(`/field-audit${query ? `?${query}` : ''}`);
+  },
+  get: (id: string) => apiClient.get<any>(`/field-audit?id=${encodeURIComponent(id)}`),
 };

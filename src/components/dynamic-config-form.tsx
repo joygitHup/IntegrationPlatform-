@@ -208,8 +208,8 @@ function PasswordInput({
 }) {
   const [show, setShow] = useState(false);
 
-  // 敏感字段占位符：如果值存在且是密文形式，用占位显示，用户输入时才替换
-  const isMasked = value && value.length > 20 && value.includes('**');
+  // 与后端 MASKED_PLACEHOLDER（*** 开头）对齐：脱敏值只展示，不回写
+  const isMasked = Boolean(value && (value.startsWith('***') || (value.length > 20 && value.includes('**'))));
   const [localValue, setLocalValue] = useState('');
   const [editing, setEditing] = useState(false);
 

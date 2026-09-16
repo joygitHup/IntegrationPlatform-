@@ -76,12 +76,16 @@ export default function DeadLettersPage() {
   // 批量操作对话框
   const [batchAction, setBatchAction] = useState<'reprocess' | 'ignore' | null>(null);
 
-  const canRetry = hasPermission('deadletter:retry');
-  const canDelete = hasPermission('deadletter:delete');
+  const canRetry = hasPermission('deadletter:retry') || hasPermission('dlq:reprocess');
+  const canDelete = hasPermission('deadletter:delete') || hasPermission('dlq:reprocess');
+  const [summary, setSummary] = useState({ pending: 0, reprocessing: 0, ignored: 0, resolved: 0 });
+  const [executionFilter, setExecutionFilter] = useState('');
 
   useEffect(() => {
+    const eid = new URLSearchParams(window.location.search).get('executionId');
+    if (eid) setExecutionFilter(eid);
     loadJobs();
-    loadDeadLetters();
+    loadDeadLetters(eid || undefined);
   }, [statusFilter, jobFilter, page]);
 
   const loadJobs = async () => {
@@ -93,15 +97,19 @@ export default function DeadLettersPage() {
     }
   };
 
-  const loadDeadLetters = async () => {
+  const loadDeadLetters = async (executionId?: string) => {
     setLoading(true);
     try {
       const params: Record<string, any> = { page, pageSize };
       if (statusFilter) params.status = statusFilter;
       if (jobFilter) params.jobId = jobFilter;
+      if (keyword) params.keyword = keyword;
+      const eid = executionId || executionFilter;
+      if (eid) params.executionId = eid;
       const result = await deadLettersApi.list(params);
       setItems(result.items || []);
       setTotal(result.total || 0);
+      if (result.summary) setSummary(result.summary);
       setSelectedIds([]);
     } catch (error) {
       toast.error((error as Error).message);
@@ -110,9 +118,9 @@ export default function DeadLettersPage() {
     }
   };
 
-  const getJobName = (jobId: string) => {
+  const getJobName = (jobId: string, fallback?: string) => {
     const job = jobList.find((j) => j.id === jobId);
-    return job ? job.name : jobId?.slice(0, 12) || '-';
+    return job ? job.name : fallback || jobId?.slice(0, 12) || '-';
   };
 
   const toggleSelect = (id: string) => {
@@ -159,9 +167,46 @@ export default function DeadLettersPage() {
     }
   };
 
-  const viewDetail = (item: any) => {
+  const [resolvePayload, setResolvePayload] = useState('');
+  const [resolveWinner, setResolveWinner] = useState<'source' | 'target'>('source');
+  const [targetRecord, setTargetRecord] = useState<any>(null);
+
+  const viewDetail = async (item: any) => {
     setDetail(item);
     setDetailId(item.id);
+    setResolveWinner('source');
+    setResolvePayload(item.payload ? JSON.stringify(item.payload, null, 2) : '{}');
+    setTargetRecord(null);
+    try {
+      const extra = await deadLettersApi.get(item.id, true);
+      setDetail({ ...item, ...extra });
+      if (extra?.payload) setResolvePayload(JSON.stringify(extra.payload, null, 2));
+      setTargetRecord(extra?.target || null);
+    } catch {
+      // 列表数据足够展示
+    }
+  };
+
+  const handleResolve = async () => {
+    if (!detail) return;
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(resolvePayload || '{}');
+    } catch {
+      toast.error('源数据 JSON 无法解析');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await deadLettersApi.resolve(detail.id, { payload, winner: resolveWinner, execute: true });
+      toast.success(resolveWinner === 'target' ? '已按目标记录写入' : '已按编辑后的源记录写入');
+      setDetailId(null);
+      loadDeadLetters();
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const totalPages = Math.ceil(total / pageSize);
@@ -180,7 +225,7 @@ export default function DeadLettersPage() {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">死信队列</h1>
-            <p className="text-sm text-muted-foreground">管理执行失败的数据记录，支持重处理和忽略</p>
+            <p className="text-sm text-muted-foreground">失败数据可改字段后按源或目标写入，也可重处理整批。</p>
           </div>
           <Button variant="outline" onClick={loadDeadLetters} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -197,7 +242,7 @@ export default function DeadLettersPage() {
             <CardContent className="flex items-center justify-between p-4">
               <div>
                 <p className="text-sm text-muted-foreground">待处理</p>
-                <p className="text-2xl font-semibold text-amber-600">{total}</p>
+                <p className="text-2xl font-semibold text-amber-600">{summary.pending}</p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
                 <AlertTriangle className="h-5 w-5" />
@@ -212,7 +257,7 @@ export default function DeadLettersPage() {
               <div>
                 <p className="text-sm text-muted-foreground">重处理中</p>
                 <p className="text-2xl font-semibold text-blue-600">
-                  {items.filter((i) => i.status === 'reprocessing').length}
+                  {summary.reprocessing}
                 </p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
@@ -228,7 +273,7 @@ export default function DeadLettersPage() {
               <div>
                 <p className="text-sm text-muted-foreground">已忽略</p>
                 <p className="text-2xl font-semibold text-gray-600">
-                  {items.filter((i) => i.status === 'ignored').length}
+                  {summary.ignored}
                 </p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-600">
@@ -244,7 +289,7 @@ export default function DeadLettersPage() {
               <div>
                 <p className="text-sm text-muted-foreground">已解决</p>
                 <p className="text-2xl font-semibold text-green-600">
-                  {items.filter((i) => i.status === 'resolved').length}
+                  {summary.resolved}
                 </p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
@@ -366,7 +411,7 @@ export default function DeadLettersPage() {
                             <td className="px-4 py-3">
                               <span className="font-mono text-xs">{item.executionId?.slice(0, 14) || item.id?.slice(0, 14)}...</span>
                             </td>
-                            <td className="px-4 py-3 font-medium">{getJobName(item.jobId)}</td>
+                            <td className="px-4 py-3 font-medium">{getJobName(item.jobId, item.jobName)}</td>
                             <td className="px-4 py-3">
                               <Badge variant={statusInfo.variant as any}>{statusInfo.label}</Badge>
                             </td>
@@ -476,7 +521,7 @@ export default function DeadLettersPage() {
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">所属任务</Label>
-                  <p className="font-medium">{getJobName(detail.jobId)}</p>
+                  <p className="font-medium">{getJobName(detail.jobId, detail.jobName)}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">执行ID</Label>
@@ -501,14 +546,33 @@ export default function DeadLettersPage() {
                     错误信息
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="data" className="mt-3">
-                  <div className="rounded-md border bg-muted/20 p-3 max-h-72 overflow-y-auto">
-                    <pre className="text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground">
-                      {detail.payload
-                        ? JSON.stringify(detail.payload, null, 2)
-                        : '无原始数据记录'}
-                    </pre>
-                  </div>
+                <TabsContent value="data" className="mt-3 space-y-3">
+                  <textarea
+                    className="h-48 w-full rounded-md border bg-muted/20 p-3 font-mono text-xs"
+                    value={resolvePayload}
+                    onChange={(e) => setResolvePayload(e.target.value)}
+                    disabled={!canRetry || detail.status !== 'pending'}
+                  />
+                  {targetRecord && (
+                    <div className="rounded-md border p-3">
+                      <Label className="text-xs text-muted-foreground">目标已有记录</Label>
+                      <pre className="mt-1 max-h-32 overflow-auto text-xs font-mono text-muted-foreground">
+                        {JSON.stringify(targetRecord, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {detail.status === 'pending' && canRetry && (
+                    <div className="flex items-center gap-4 text-sm">
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="winner" checked={resolveWinner === 'source'} onChange={() => setResolveWinner('source')} />
+                        用编辑后的源数据
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="winner" checked={resolveWinner === 'target'} onChange={() => setResolveWinner('target')} disabled={!targetRecord} />
+                        保留目标已有记录
+                      </label>
+                    </div>
+                  )}
                 </TabsContent>
                 <TabsContent value="error" className="mt-3">
                   <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 max-h-72 overflow-y-auto">
@@ -549,6 +613,10 @@ export default function DeadLettersPage() {
                   <RotateCcw className="mr-2 h-4 w-4" />
                 )}
                 重新处理
+              </Button>
+              <Button onClick={handleResolve} disabled={actionLoading}>
+                {actionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                写入目标
               </Button>
             </div>
           )}

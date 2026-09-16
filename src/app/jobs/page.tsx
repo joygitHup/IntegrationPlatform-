@@ -2,7 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/app-layout';
-import { jobsApi, datasourcesApi } from '@/lib/api-client';
+import { jobsApi, datasourcesApi, openApi, connectorsApi } from '@/lib/api-client';
+import { OrgTreePanel } from '@/components/org-tree';
+import { DagCanvas } from '@/components/dag-canvas';
+import { parseDagSteps, stringifyDagSteps } from '@/lib/dag';
+import {
+  DESENSITIZE_OPTIONS,
+  TRANSFORM_OPTIONS,
+  defaultMapping,
+  emptyJobForm,
+  buildJobPayload,
+  formFromJobDetail,
+  suggestJobCode,
+  validateJobForm,
+  connectorSupportsIncremental,
+  connectorSupportsUpsert,
+  type FieldMapping,
+} from '@/lib/job-form';
+import { resolveConnectorList } from '@/lib/datasource-form';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +51,8 @@ import {
   Activity,
   CheckCircle2,
   XCircle,
+  Users,
+  Network,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -57,6 +76,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const STATUS_MAP: Record<string, { label: string; variant: string }> = {
   running: { label: '运行中', variant: 'success' },
@@ -70,77 +90,13 @@ const SYNC_MODE_MAP: Record<string, string> = {
   incremental: '增量同步',
 };
 
+const IDENTITY_TYPES = new Set(['dingtalk', 'wecom', 'ldap', 'active_directory']);
+
 const SCHEDULE_TYPE_MAP: Record<string, string> = {
   manual: '手动触发',
   cron: '定时调度',
   event: '事件触发',
   webhook: 'Webhook',
-};
-
-const TRANSFORM_OPTIONS = [
-  { value: '', label: '直接映射' },
-  { value: 'trim', label: '去除空白 (trim)' },
-  { value: 'upper', label: '转大写 (upper)' },
-  { value: 'lower', label: '转小写 (lower)' },
-  { value: 'toInt', label: '转整数 (toInt)' },
-  { value: 'toFloat', label: '转浮点数 (toFloat)' },
-  { value: 'toString', label: '转字符串 (toString)' },
-  { value: 'toDate', label: '转日期 (toDate)' },
-  { value: 'defaultValue', label: '默认值填充' },
-];
-
-interface FieldMapping {
-  source: string;
-  target: string;
-  transform: string;
-  defaultValue: string;
-  required: boolean;
-}
-
-const defaultMapping: FieldMapping = {
-  source: '',
-  target: '',
-  transform: '',
-  defaultValue: '',
-  required: false,
-};
-
-interface JobForm {
-  name: string;
-  code: string;
-  description: string;
-  sourceDatasourceId: string;
-  targetDatasourceId: string;
-  syncMode: string;
-  watermarkField: string;
-  scheduleType: string;
-  scheduleCron: string;
-  batchSize: number;
-  retryCount: number;
-  retryInterval: number;
-  sourceTable: string;
-  targetTable: string;
-  fieldMapping: FieldMapping[];
-  filterCondition: string;
-}
-
-const emptyForm: JobForm = {
-  name: '',
-  code: '',
-  description: '',
-  sourceDatasourceId: '',
-  targetDatasourceId: '',
-  syncMode: 'full',
-  watermarkField: '',
-  scheduleType: 'manual',
-  scheduleCron: '0 */5 * * * *',
-  batchSize: 1000,
-  retryCount: 3,
-  retryInterval: 60,
-  sourceTable: '',
-  targetTable: '',
-  fieldMapping: [{ ...defaultMapping }],
-  filterCondition: '',
 };
 
 export default function JobsPage() {
@@ -151,23 +107,54 @@ export default function JobsPage() {
   const [status, setStatus] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
+  const [pullingId, setPullingId] = useState<string | null>(null);
+  const [orgJob, setOrgJob] = useState<any | null>(null);
 
   // 对话框状态
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dialogLoading, setDialogLoading] = useState(false);
-  const [form, setForm] = useState<JobForm>({ ...emptyForm });
+  const [form, setForm] = useState({ ...emptyJobForm, fieldMapping: [{ ...defaultMapping }] });
+  const [codeTouched, setCodeTouched] = useState(false);
   const [datasourceList, setDatasourceList] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('basic');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [sourceColumns, setSourceColumns] = useState<string[]>([]);
+  const [inspectedTables, setInspectedTables] = useState<string[]>([]);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewRows, setPreviewRows] = useState<any[] | null>(null);
+  const [promoteId, setPromoteId] = useState<string | null>(null);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [connectors, setConnectors] = useState<any[]>([]);
 
   const canWrite = hasPermission('job:write');
   const canExecute = hasPermission('job:execute');
+  const sourceConnector = connectors.find(
+    (c) => c.type === datasourceList.find((d) => d.id === form.sourceDatasourceId)?.type,
+  );
+  const sourceAllowsIncremental = connectorSupportsIncremental(sourceConnector);
+  const targetConnector = connectors.find(
+    (c) => c.type === datasourceList.find((d) => d.id === form.targetDatasourceId)?.type,
+  );
+  const targetAllowsUpsert = connectorSupportsUpsert(targetConnector);
+
+  useEffect(() => {
+    if (!targetAllowsUpsert && (form.writeMode === 'upsert' || form.writeMode === 'update_only')) {
+      setForm((prev) => ({ ...prev, writeMode: 'insert' }));
+    }
+  }, [targetAllowsUpsert, form.writeMode]);
 
   useEffect(() => {
     loadJobs();
     loadDatasources();
-  }, [status]);
+    if (hasPermission('open:manage')) {
+      openApi.clients.list().then((r) => setPartners(r.items || [])).catch(() => setPartners([]));
+    }
+    openApi.templates().then((r) => setTemplates(r.items || [])).catch(() => setTemplates([]));
+    connectorsApi.list().then((r) => setConnectors(resolveConnectorList(r))).catch(() => setConnectors([]));
+  }, [status, hasPermission]);
 
   const loadJobs = async () => {
     setLoading(true);
@@ -186,52 +173,79 @@ export default function JobsPage() {
 
   const loadDatasources = async () => {
     try {
-      const result = await datasourcesApi.list({ pageSize: 100 });
+      const result = await datasourcesApi.list({ pageSize: 100, status: 'active' });
       setDatasourceList(result.items || []);
     } catch (error) {
       console.error('Failed to load datasources:', error);
     }
   };
 
+  const applySyncTemplate = (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) {
+      setForm({ ...form, templateType: '' });
+      return;
+    }
+    const mappings = (tpl.fieldMappings || []).map((m: any) => {
+      let transform = m.transform || '';
+      if (transform === 'none') transform = '';
+      if (transform === 'to_date') transform = 'toDate';
+      return {
+        source: m.source || '',
+        target: m.target || '',
+        transform,
+        defaultValue: m.defaultValue || '',
+        required: Boolean(m.required),
+        params: m.params && typeof m.params === 'object' ? m.params : undefined,
+      };
+    });
+    const sm = tpl.statusMapping;
+    if (sm?.sourceField && sm?.targetField && Array.isArray(sm.rules) && sm.rules.length) {
+      const extra = {
+        source: sm.sourceField,
+        target: sm.targetField,
+        transform: 'statusMap',
+        defaultValue: '',
+        required: false,
+        params: { rules: sm.rules },
+      };
+      const idx = mappings.findIndex((m: FieldMapping) => m.target === extra.target);
+      if (idx >= 0) mappings[idx] = { ...mappings[idx], ...extra };
+      else mappings.push(extra);
+    }
+    setForm({
+      ...form,
+      templateType: tpl.id,
+      matchKeys: (tpl.defaultMatchKeys || []).join(','),
+      sensitiveFields: (tpl.defaultSensitiveFields || []).join(','),
+      fieldMapping: mappings.length ? mappings : form.fieldMapping,
+    });
+    toast.success(`已套用「${tpl.name}」`);
+  };
+
   const openCreate = () => {
     setEditingId(null);
-    setForm({ ...emptyForm, fieldMapping: [{ ...defaultMapping }] });
+    setCodeTouched(false);
+    setForm({ ...emptyJobForm, fieldMapping: [{ ...defaultMapping }] });
     setFormErrors({});
+    setSourceColumns([]);
+    setInspectedTables([]);
+    setPreviewRows(null);
     setActiveTab('basic');
     setDialogOpen(true);
   };
 
   const openEdit = async (job: any) => {
     setEditingId(job.id);
+    setCodeTouched(true);
     setDialogLoading(true);
     setDialogOpen(true);
     try {
       const detail = await jobsApi.get(job.id);
-      setForm({
-        name: detail.name || '',
-        code: detail.code || '',
-        description: detail.description || '',
-        sourceDatasourceId: detail.sourceDatasourceId || '',
-        targetDatasourceId: detail.targetDatasourceId || '',
-        syncMode: detail.syncMode || 'full',
-        watermarkField: detail.watermarkField || '',
-        scheduleType: detail.scheduleType || 'manual',
-        scheduleCron: detail.scheduleCron || '0 */5 * * * *',
-        batchSize: detail.batchSize || 1000,
-        retryCount: detail.retryCount ?? 3,
-        retryInterval: detail.retryInterval ?? 60,
-        sourceTable: detail.sourceConfig?.table || detail.sourceConfig?.path || '',
-        targetTable: detail.targetConfig?.table || detail.targetConfig?.path || '',
-        fieldMapping: (detail.fieldMapping || []).map((m: any) => ({
-          source: m.source || '',
-          target: m.target || '',
-          transform: m.transform || '',
-          defaultValue: m.defaultValue || '',
-          required: m.required || false,
-        })),
-        filterCondition: detail.filterCondition || '',
-      });
+      setForm(formFromJobDetail(detail));
       setFormErrors({});
+      setInspectedTables([]);
+      setSourceColumns([]);
       setActiveTab('basic');
     } catch (error) {
       toast.error((error as Error).message);
@@ -241,61 +255,18 @@ export default function JobsPage() {
     }
   };
 
-  const validateForm = (): boolean => {
-    const errors: Record<string, string> = {};
-    if (!form.name.trim()) errors.name = '请输入任务名称';
-    if (!form.code.trim()) errors.code = '请输入任务编码';
-    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(form.code)) errors.code = '编码只能包含字母、数字和下划线，且以字母开头';
-    if (!form.sourceDatasourceId) errors.sourceDatasourceId = '请选择源数据源';
-    if (!form.targetDatasourceId) errors.targetDatasourceId = '请选择目标数据源';
-    if (form.scheduleType === 'cron' && !form.scheduleCron.trim()) errors.scheduleCron = '请输入 Cron 表达式';
-    if (form.syncMode === 'incremental' && !form.watermarkField.trim()) {
-      errors.watermarkField = '增量同步需指定水位字段';
-    }
-    if (form.fieldMapping.length > 0) {
-      const hasValid = form.fieldMapping.some((m) => m.source.trim() && m.target.trim());
-      if (!hasValid) errors.fieldMapping = '至少配置一条有效的字段映射';
-    }
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
   const handleSubmit = async () => {
-    if (!validateForm()) {
-      setActiveTab('basic');
+    const { errors, tab } = validateJobForm(form);
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      setActiveTab(tab);
       toast.error('请检查表单填写');
       return;
     }
 
     setDialogLoading(true);
     try {
-      const payload: Record<string, any> = {
-        name: form.name,
-        code: form.code,
-        description: form.description,
-        sourceDatasourceId: form.sourceDatasourceId,
-        targetDatasourceId: form.targetDatasourceId,
-        syncMode: form.syncMode,
-        watermarkField: form.syncMode === 'incremental' ? form.watermarkField : undefined,
-        scheduleType: form.scheduleType,
-        scheduleCron: form.scheduleType === 'cron' ? form.scheduleCron : undefined,
-        batchSize: Number(form.batchSize) || 1000,
-        retryCount: Number(form.retryCount) || 0,
-        retryInterval: Number(form.retryInterval) || 60,
-        filterCondition: form.filterCondition || undefined,
-        sourceConfig: form.sourceTable ? { table: form.sourceTable } : {},
-        targetConfig: form.targetTable ? { table: form.targetTable } : {},
-        fieldMapping: form.fieldMapping
-          .filter((m) => m.source.trim() && m.target.trim())
-          .map((m) => ({
-            source: m.source.trim(),
-            target: m.target.trim(),
-            transform: m.transform || undefined,
-            defaultValue: m.defaultValue || undefined,
-            required: m.required || undefined,
-          })),
-      };
-
+      const payload = buildJobPayload(form);
       if (editingId) {
         await jobsApi.update(editingId, payload);
         toast.success('任务更新成功');
@@ -321,6 +292,27 @@ export default function JobsPage() {
       toast.error((error as Error).message);
     } finally {
       setTriggeringId(null);
+    }
+  };
+
+  const handleIdentityPull = async (job: any) => {
+    setPullingId(job.id);
+    try {
+      const result = await openApi.identity.pull({
+        datasourceId: job.sourceDatasourceId,
+        jobId: job.id,
+        syncOrg: true,
+        executeJob: true,
+      });
+      const execId = result.execution?.executionId || result.execution?.id;
+      toast.success(
+        `已拉取 ${result.userCount ?? 0} 名用户、${result.departmentCount ?? 0} 个部门，并写入目标`,
+        execId ? { description: `执行ID: ${String(execId).slice(0, 12)}...` } : undefined,
+      );
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setPullingId(null);
     }
   };
 
@@ -362,9 +354,94 @@ export default function JobsPage() {
     setForm({ ...form, fieldMapping: newMappings });
   };
 
+  const inspectSource = async () => {
+    if (!form.sourceDatasourceId) {
+      toast.error('请先选择源数据源');
+      return;
+    }
+    setInspectLoading(true);
+    try {
+      const result = await datasourcesApi.inspect({
+        id: form.sourceDatasourceId,
+        table: form.sourceTable || undefined,
+      });
+      const tableNames = (result.tables || [])
+        .map((t: any) => (typeof t === 'string' ? t : t?.name))
+        .filter(Boolean);
+      setInspectedTables(tableNames);
+      const cols = (result.columns || []).map((c: any) => c.name).filter(Boolean);
+      setSourceColumns(cols);
+      if (!form.sourceTable && tableNames.length === 1) {
+        setForm((prev) => ({ ...prev, sourceTable: tableNames[0] }));
+      }
+      if (cols.length && form.fieldMapping.every((m) => !m.source && !m.target)) {
+        setForm((prev) => ({
+          ...prev,
+          fieldMapping: cols.slice(0, 12).map((name: string) => ({
+            ...defaultMapping,
+            source: name,
+            target: name,
+          })),
+        }));
+      }
+      const hint = result.message || (cols.length ? `探测到 ${cols.length} 个字段` : tableNames.length ? `探测到 ${tableNames.length} 个 Topic/队列/表` : '已探测，请填写表名后再试');
+      toast.success(hint);
+    } catch (error) {
+      toast.error((error as Error).message || '探测失败');
+    } finally {
+      setInspectLoading(false);
+    }
+  };
+
+  const previewMapping = async () => {
+    if (!form.sourceDatasourceId) {
+      toast.error('请先选择源数据源');
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const result = await jobsApi.preview({
+        datasourceId: form.sourceDatasourceId,
+        table: form.sourceTable || undefined,
+        fieldMapping: form.fieldMapping.filter((m) => m.source.trim() && m.target.trim()),
+        filterCondition: form.filterCondition.trim() || undefined,
+        limit: 20,
+      });
+      setPreviewRows(result.preview || result.sample || []);
+      const cols = result.columns || [];
+      if (cols.length) setSourceColumns(cols);
+      if (result.mapping && result.mapping.valid === false) {
+        toast.error((result.mapping.errors || []).join('；') || '映射校验失败');
+      } else {
+        toast.success('已生成映射预览');
+      }
+    } catch (error) {
+      toast.error((error as Error).message || '预览失败');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handlePromote = async () => {
+    if (!promoteId) return;
+    try {
+      await openApi.promote({ jobId: promoteId, targetEnvironment: 'prod' });
+      toast.success('已复制到生产环境（新任务默认停止）');
+      setPromoteId(null);
+      loadJobs();
+    } catch (error) {
+      toast.error((error as Error).message || '晋升失败');
+    }
+  };
+
   const getDatasourceName = (id: string) => {
     const ds = datasourceList.find((d) => d.id === id);
     return ds ? ds.name : id?.slice(0, 8) || '-';
+  };
+
+  const isIdentityJob = (job: any) => {
+    const ds = datasourceList.find((d) => d.id === job.sourceDatasourceId);
+    return ds ? IDENTITY_TYPES.has(String(ds.type || '').toLowerCase()) : false;
   };
 
   const stats = {
@@ -495,6 +572,7 @@ export default function JobsPage() {
                   <thead>
                     <tr className="border-b bg-muted/30">
                       <th className="px-4 py-3 text-left font-medium">任务名称</th>
+                      <th className="px-4 py-3 text-left font-medium">数据流向</th>
                       <th className="px-4 py-3 text-left font-medium">同步方式</th>
                       <th className="px-4 py-3 text-left font-medium">调度方式</th>
                       <th className="px-4 py-3 text-left font-medium">状态</th>
@@ -519,6 +597,11 @@ export default function JobsPage() {
                               </div>
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">
+                            <span>{getDatasourceName(job.sourceDatasourceId)}</span>
+                            <span className="mx-1">→</span>
+                            <span>{getDatasourceName(job.targetDatasourceId)}</span>
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 text-muted-foreground">
                               <ArrowRightLeft className="h-3 w-3" />
@@ -528,6 +611,8 @@ export default function JobsPage() {
                           <td className="px-4 py-3 text-xs text-muted-foreground">
                             {job.scheduleType === 'cron' && job.scheduleCron ? (
                               <code className="rounded bg-muted px-1.5 py-0.5">{job.scheduleCron}</code>
+                            ) : job.scheduleType === 'event' && job.scheduleCron ? (
+                              <span>事件 {job.scheduleCron}</span>
                             ) : (
                               SCHEDULE_TYPE_MAP[job.scheduleType] || job.scheduleType
                             )}
@@ -559,25 +644,66 @@ export default function JobsPage() {
                                   )}
                                 </Button>
                               )}
-                              {job.scheduleType === 'cron' && canWrite && (
+                              {canExecute && isIdentityJob(job) && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 px-2"
+                                  onClick={() => handleIdentityPull(job)}
+                                  disabled={pullingId === job.id}
+                                  title="从钉钉/企微/AD 拉取通讯录"
+                                >
+                                  {pullingId === job.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Users className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2"
+                                onClick={() => setOrgJob(job)}
+                                title="查看组织架构树"
+                              >
+                                <Network className="h-4 w-4" />
+                              </Button>
+                              { (job.scheduleType === 'cron' || job.scheduleType === 'event' || job.scheduleType === 'webhook') && canWrite && (
                                 <>
-                                  {job.status !== 'running' ? (
+                                  {job.status !== 'running' && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       className="h-8 px-2"
                                       onClick={() => handleControl(job.id, 'start')}
-                                      title="启动调度"
+                                      title={
+                                        job.status === 'paused'
+                                          ? (job.scheduleType === 'webhook' ? '恢复接收' : job.scheduleType === 'event' ? '恢复事件监听' : '恢复调度')
+                                          : (job.scheduleType === 'webhook' ? '启动接收' : job.scheduleType === 'event' ? '启动事件监听' : '启动调度')
+                                      }
                                     >
                                       <PlayCircle className="h-4 w-4" />
                                     </Button>
-                                  ) : (
+                                  )}
+                                  {job.status === 'running' && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 px-2"
+                                      onClick={() => handleControl(job.id, 'pause')}
+                                      title={job.scheduleType === 'webhook' ? '暂停接收' : job.scheduleType === 'event' ? '暂停事件监听' : '暂停调度'}
+                                    >
+                                      <PauseCircle className="h-4 w-4" />
+                                    </Button>
+                                  )}
+                                  {(job.status === 'running' || job.status === 'paused') && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       className="h-8 px-2"
                                       onClick={() => handleControl(job.id, 'stop')}
-                                      title="停止调度"
+                                      title={job.scheduleType === 'webhook' ? '停止接收' : job.scheduleType === 'event' ? '停止事件监听' : '停止调度'}
                                     >
                                       <StopCircle className="h-4 w-4" />
                                     </Button>
@@ -595,6 +721,17 @@ export default function JobsPage() {
                                   >
                                     <Edit className="h-4 w-4" />
                                   </Button>
+                                  {job.environment !== 'prod' && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 px-2"
+                                      onClick={() => setPromoteId(job.id)}
+                                      title="晋升到生产"
+                                    >
+                                      <GitBranch className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -621,7 +758,7 @@ export default function JobsPage() {
 
       {/* 新建/编辑对话框 */}
       <Dialog open={dialogOpen} onOpenChange={(o) => !o && setDialogOpen(false)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col overflow-hidden sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>{editingId ? '编辑任务' : '新建集成任务'}</DialogTitle>
             <DialogDescription>
@@ -640,6 +777,7 @@ export default function JobsPage() {
                   <TabsTrigger value="basic">基本信息</TabsTrigger>
                   <TabsTrigger value="mapping">字段映射</TabsTrigger>
                   <TabsTrigger value="schedule">调度配置</TabsTrigger>
+                  <TabsTrigger value="dag">DAG 编排</TabsTrigger>
                   <TabsTrigger value="advanced">高级设置</TabsTrigger>
                 </TabsList>
 
@@ -652,7 +790,15 @@ export default function JobsPage() {
                         <Input
                           placeholder="如：用户数据同步"
                           value={form.name}
-                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                          onChange={(e) => {
+                            const name = e.target.value;
+                            setForm((prev) => ({
+                              ...prev,
+                              name,
+                              code: codeTouched || editingId ? prev.code : (name ? suggestJobCode(name) : ''),
+                            }));
+                            if (formErrors.name) setFormErrors({ ...formErrors, name: '' });
+                          }}
                           className={formErrors.name ? 'border-destructive' : ''}
                         />
                         {formErrors.name && <p className="text-xs text-destructive">{formErrors.name}</p>}
@@ -662,7 +808,11 @@ export default function JobsPage() {
                         <Input
                           placeholder="如：user_sync_01"
                           value={form.code}
-                          onChange={(e) => setForm({ ...form, code: e.target.value })}
+                          onChange={(e) => {
+                            setCodeTouched(true);
+                            setForm({ ...form, code: e.target.value });
+                            if (formErrors.code) setFormErrors({ ...formErrors, code: '' });
+                          }}
                           className={formErrors.code ? 'border-destructive' : ''}
                           disabled={!!editingId}
                         />
@@ -684,14 +834,25 @@ export default function JobsPage() {
                       <div className="space-y-2">
                         <Label className="flex items-center gap-1">
                           <Database className="h-3.5 w-3.5 text-green-600" />
-                          源数据源 <span className="text-destructive">*</span>
+                          源数据源 {form.scheduleType !== 'webhook' && <span className="text-destructive">*</span>}
                         </Label>
                         <select
                           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                           value={form.sourceDatasourceId}
-                          onChange={(e) => setForm({ ...form, sourceDatasourceId: e.target.value })}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            const ds = datasourceList.find((d) => d.id === id);
+                            const meta = connectors.find((c) => c.type === ds?.type);
+                            const ok = connectorSupportsIncremental(meta);
+                            setForm({
+                              ...form,
+                              sourceDatasourceId: id,
+                              syncMode: ok ? form.syncMode : 'full',
+                              watermarkField: ok ? form.watermarkField : '',
+                            });
+                          }}
                         >
-                          <option value="">请选择源数据源</option>
+                          <option value="">{form.scheduleType === 'webhook' ? 'Webhook 推数可不选源' : '请选择源数据源'}</option>
                           {datasourceList.map((ds) => (
                             <option key={ds.id} value={ds.id}>{ds.name} ({ds.type})</option>
                           ))}
@@ -706,13 +867,24 @@ export default function JobsPage() {
                         <select
                           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                           value={form.targetDatasourceId}
-                          onChange={(e) => setForm({ ...form, targetDatasourceId: e.target.value })}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            const ds = datasourceList.find((d) => d.id === id);
+                            const meta = connectors.find((c) => c.type === ds?.type);
+                            const ok = connectorSupportsUpsert(meta);
+                            setForm({
+                              ...form,
+                              targetDatasourceId: id,
+                              writeMode: ok ? form.writeMode : 'insert',
+                            });
+                          }}
                         >
                           <option value="">请选择目标数据源</option>
-                          {datasourceList.map((ds) => (
+                          {datasourceList.filter((ds) => !IDENTITY_TYPES.has(ds.type)).map((ds) => (
                             <option key={ds.id} value={ds.id}>{ds.name} ({ds.type})</option>
                           ))}
                         </select>
+                        <p className="text-xs text-muted-foreground">钉钉 / 企微 / AD / LDAP 只能当源，目标请用库表、HTTP 或 SCIM。</p>
                         {formErrors.targetDatasourceId && <p className="text-xs text-destructive">{formErrors.targetDatasourceId}</p>}
                       </div>
                     </div>
@@ -721,10 +893,16 @@ export default function JobsPage() {
                       <div className="space-y-2">
                         <Label>源表/路径</Label>
                         <Input
-                          placeholder="如：users 或 /api/users"
+                          list="source-table-options"
+                          placeholder="如：users、topic 或队列名，可先点探测"
                           value={form.sourceTable}
                           onChange={(e) => setForm({ ...form, sourceTable: e.target.value })}
                         />
+                        <datalist id="source-table-options">
+                          {inspectedTables.map((name) => (
+                            <option key={name} value={name} />
+                          ))}
+                        </datalist>
                       </div>
                       <div className="space-y-2">
                         <Label>目标表/路径</Label>
@@ -739,20 +917,27 @@ export default function JobsPage() {
                     <div className="space-y-2">
                       <Label>同步模式</Label>
                       <div className="flex gap-4">
-                        {Object.entries(SYNC_MODE_MAP).map(([key, label]) => (
-                          <label key={key} className="flex items-center gap-2 cursor-pointer">
+                        {Object.entries(SYNC_MODE_MAP).map(([key, label]) => {
+                          const disabled = key === 'incremental' && !sourceAllowsIncremental;
+                          return (
+                          <label key={key} className={`flex items-center gap-2 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                             <input
                               type="radio"
                               name="syncMode"
                               value={key}
                               checked={form.syncMode === key}
+                              disabled={disabled}
                               onChange={(e) => setForm({ ...form, syncMode: e.target.value })}
                               className="h-4 w-4"
                             />
                             <span className="text-sm">{label}</span>
                           </label>
-                        ))}
+                          );
+                        })}
                       </div>
+                      {!sourceAllowsIncremental && (
+                        <p className="text-xs text-muted-foreground">当前源连接器不支持增量，仅可全量同步。</p>
+                      )}
                     </div>
 
                     {form.syncMode === 'incremental' && (
@@ -774,15 +959,46 @@ export default function JobsPage() {
 
                   {/* 字段映射 */}
                   <TabsContent value="mapping" className="mt-0 space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <p className="text-sm text-muted-foreground">
-                        配置源字段到目标字段的映射关系，支持数据转换
+                        配置源字段到目标字段的映射关系。可先探测源表结构，再预览转换结果。
                       </p>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={inspectSource} disabled={inspectLoading}>
+                          {inspectLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Database className="mr-2 h-3.5 w-3.5" />}
+                          探测字段
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={previewMapping} disabled={previewLoading}>
+                          {previewLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-2 h-3.5 w-3.5" />}
+                          预览映射
+                        </Button>
                       <Button variant="outline" size="sm" onClick={addMapping}>
                         <PlusCircle className="mr-2 h-3.5 w-3.5" />
                         添加字段
                       </Button>
+                      </div>
                     </div>
+
+                    {templates.length > 0 && (
+                      <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                        <Label>用户同步模板</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.templateType || ''}
+                          onChange={(e) => applySyncTemplate(e.target.value)}
+                        >
+                          <option value="">不使用模板，自行配置映射</option>
+                          {templates.map((tpl) => (
+                            <option key={tpl.id} value={tpl.id}>
+                              {tpl.name}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          套用后会覆盖字段映射（含状态映射）、匹配键和敏感字段，可再手动调整。
+                        </p>
+                      </div>
+                    )}
 
                     {formErrors.fieldMapping && (
                       <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">
@@ -801,11 +1017,24 @@ export default function JobsPage() {
                       </div>
                       <div className="divide-y max-h-72 overflow-y-auto">
                         {form.fieldMapping.map((mapping, index) => (
-                          <div key={index} className="grid grid-cols-12 gap-2 px-3 py-2 items-center">
+                          <div key={index} className="space-y-2 px-3 py-2">
+                          <div className="grid grid-cols-12 gap-2 items-center">
                             <div className="col-span-1 text-muted-foreground">
                               <GripVertical className="h-4 w-4" />
                             </div>
                             <div className="col-span-3">
+                              {sourceColumns.length > 0 ? (
+                                <select
+                                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                                  value={mapping.source}
+                                  onChange={(e) => updateMapping(index, 'source', e.target.value)}
+                                >
+                                  <option value="">选择源字段</option>
+                                  {sourceColumns.map((col) => (
+                                    <option key={col} value={col}>{col}</option>
+                                  ))}
+                                </select>
+                              ) : (
                               <Input
                                 size={1}
                                 placeholder="source_field"
@@ -813,6 +1042,7 @@ export default function JobsPage() {
                                 onChange={(e) => updateMapping(index, 'source', e.target.value)}
                                 className="h-8 text-xs"
                               />
+                              )}
                             </div>
                             <div className="col-span-3">
                               <Input
@@ -854,9 +1084,32 @@ export default function JobsPage() {
                               </Button>
                             </div>
                           </div>
+                          {mapping.transform === 'custom' && (
+                            <Input
+                              placeholder="表达式，变量名为 value，例如 str(value).upper() 或 value + '_ok'"
+                              value={String(mapping.params?.expression || '')}
+                              onChange={(e) => updateMapping(index, 'params', { ...(mapping.params || {}), expression: e.target.value })}
+                              className="h-8 text-xs font-mono"
+                            />
+                          )}
+                          {mapping.transform === 'statusMap' && Array.isArray(mapping.params?.rules) && (
+                            <p className="text-xs text-muted-foreground">
+                              状态映射：{(mapping.params.rules as Array<{ from?: unknown; to?: unknown; label?: string }>).map((r) => `${r.label || r.from}→${String(r.to)}`).join('，')}
+                            </p>
+                          )}
+                          </div>
                         ))}
                       </div>
                     </div>
+
+                    {previewRows && previewRows.length > 0 && (
+                      <div className="rounded-lg border p-3 text-xs">
+                        <p className="mb-2 font-medium">映射预览（最多 5 行）</p>
+                        <pre className="max-h-48 overflow-auto rounded bg-muted p-2 leading-5">
+                          {JSON.stringify(previewRows, null, 2)}
+                        </pre>
+                      </div>
+                    )}
 
                     <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
                       <p className="font-medium">💡 转换说明</p>
@@ -865,6 +1118,7 @@ export default function JobsPage() {
                         <li><strong>trim / upper / lower</strong>：字符串处理</li>
                         <li><strong>toInt / toFloat / toString / toDate</strong>：类型转换</li>
                         <li><strong>默认值填充</strong>：源字段为空时使用默认值</li>
+                        <li><strong>状态映射</strong>：按模板规则转换启用/禁用等状态码</li>
                       </ul>
                     </div>
                   </TabsContent>
@@ -890,7 +1144,16 @@ export default function JobsPage() {
                                   ? 'border-blue-500 bg-blue-50 text-blue-700'
                                   : 'border-border hover:border-muted-foreground/50'
                               }`}
-                              onClick={() => setForm({ ...form, scheduleType: item.key })}
+                              onClick={() => {
+                                const next = { ...form, scheduleType: item.key };
+                                if (item.key === 'event' && (form.scheduleCron.includes(' ') || !form.scheduleCron.trim())) {
+                                  next.scheduleCron = 'job.completed';
+                                }
+                                if (item.key === 'cron' && !form.scheduleCron.includes(' ')) {
+                                  next.scheduleCron = '0 */5 * * * *';
+                                }
+                                setForm(next);
+                              }}
                             >
                               <Icon className="h-5 w-5" />
                               <div className="text-sm font-medium">{item.label}</div>
@@ -912,10 +1175,82 @@ export default function JobsPage() {
                         />
                         {formErrors.scheduleCron && <p className="text-xs text-destructive">{formErrors.scheduleCron}</p>}
                         <p className="text-xs text-blue-600">
-                          格式：分 时 日 月 周 &nbsp; 示例：<code className="bg-blue-100 px-1 rounded">0 2 * * *</code> 表示每天凌晨 2 点
+                          5 段（分 时 日 月 周）或 6 段（秒 分 时 日 月 周）。支持 <code className="bg-blue-100 px-1 rounded">*</code>、
+                          <code className="bg-blue-100 px-1 rounded">*/5</code>、<code className="bg-blue-100 px-1 rounded">1-5</code>、
+                          <code className="bg-blue-100 px-1 rounded">1,15</code>、<code className="bg-blue-100 px-1 rounded">MON-FRI</code>。
+                          示例：<code className="bg-blue-100 px-1 rounded">0 2 * * 1-5</code> 表示工作日凌晨 2 点
                         </p>
                       </div>
                     )}
+
+                    {form.scheduleType === 'event' && (
+                      <div className="space-y-2 rounded-lg bg-amber-50/60 p-4 border border-amber-100">
+                        <Label className="text-amber-800">监听事件</Label>
+                        <Input
+                          placeholder="job.completed"
+                          value={form.scheduleCron}
+                          onChange={(e) => setForm({ ...form, scheduleCron: e.target.value })}
+                          className={`font-mono ${formErrors.scheduleCron ? 'border-destructive' : ''}`}
+                        />
+                        {formErrors.scheduleCron && <p className="text-xs text-destructive">{formErrors.scheduleCron}</p>}
+                        <p className="text-xs text-amber-800">
+                          任务必须为「运行中」。新建默认停止，请先在列表点启动。其它任务结束后会发出 <code className="rounded bg-amber-100 px-1">job.completed</code>
+                          、<code className="rounded bg-amber-100 px-1">job.completed.任务编码</code>。也可填 <code className="rounded bg-amber-100 px-1">*</code> 监听全部完成事件。
+                        </p>
+                      </div>
+                    )}
+
+                    {form.scheduleType === 'webhook' && (
+                      <div className="space-y-2 rounded-lg bg-muted/50 p-4 border">
+                        <Label>入站地址</Label>
+                        <p className="font-mono text-xs break-all">
+                          POST {(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '')}/open/hooks/{form.code || '{code}'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Header 使用任务的 webhookSecret：X-Webhook-Secret。Body 为记录数组即可写入目标；不带 records 时仍需配置源数据源才能抽取。
+                        </p>
+                        <p className="text-xs text-amber-800">
+                          任务必须为「运行中」才会接收推数。新建默认停止，请先在列表点启动。
+                        </p>
+                        {form.webhookSecret && (
+                          <p className="font-mono text-xs break-all">X-Webhook-Secret: {form.webhookSecret}</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label>执行回执 URL</Label>
+                      <Input
+                        placeholder="https://partner.example.com/callbacks/jobs"
+                        value={form.callbackUrl}
+                        onChange={(e) => setForm({ ...form, callbackUrl: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        任务结束后 POST 成功/失败/行数；若配置了 webhookSecret，会带 X-Hub-Signature-256。
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>失败告警邮箱</Label>
+                        <Input
+                          placeholder="ops@example.com"
+                          value={form.alertEmail}
+                          onChange={(e) => setForm({ ...form, alertEmail: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>失败告警 Webhook</Label>
+                        <Input
+                          placeholder="https://hooks.example.com/alert"
+                          value={form.alertWebhookUrl}
+                          onChange={(e) => setForm({ ...form, alertWebhookUrl: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      仅在失败/部分失败时发送。未填则沿用集成凭证上的告警配置。邮件需配置 SMTP_HOST。
+                    </p>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-2">
@@ -934,7 +1269,7 @@ export default function JobsPage() {
                           value={form.retryCount}
                           onChange={(e) => setForm({ ...form, retryCount: Number(e.target.value) })}
                         />
-                        <p className="text-xs text-muted-foreground">最多重试次数</p>
+                        <p className="text-xs text-muted-foreground">整次执行失败后自动再入队的次数</p>
                       </div>
                       <div className="space-y-2">
                         <Label>重试间隔（秒）</Label>
@@ -946,6 +1281,40 @@ export default function JobsPage() {
                         <p className="text-xs text-muted-foreground">每次重试间隔</p>
                       </div>
                     </div>
+                  </TabsContent>
+
+                  <TabsContent value="dag" className="mt-0 space-y-4">
+                    {(() => {
+                      const parsed = parseDagSteps(form.dagSteps);
+                      return (
+                        <>
+                          {parsed.error && (
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs text-destructive">{parsed.error}</p>
+                              <button
+                                type="button"
+                                className="text-xs text-blue-600 hover:underline"
+                                onClick={() => setForm({ ...form, dagSteps: '' })}
+                              >
+                                清空重排
+                              </button>
+                            </div>
+                          )}
+                          <DagCanvas
+                            steps={parsed.steps}
+                            onChange={(steps) => setForm({ ...form, dagSteps: stringifyDagSteps(steps) })}
+                            datasources={datasourceList}
+                            jobs={jobs.filter((j) => j.id !== editingId)}
+                            defaultSourceId={form.sourceDatasourceId}
+                            defaultTargetId={form.targetDatasourceId}
+                          />
+                        </>
+                      );
+                    })()}
+                    {formErrors.dagSteps && <p className="text-xs text-destructive">{formErrors.dagSteps}</p>}
+                    <p className="text-xs text-muted-foreground">
+                      每步可含 sourceDatasourceId / targetDatasourceId / fieldMapping / jobId / dependsOn。空则按单步 ETL。
+                    </p>
                   </TabsContent>
 
                   {/* 高级设置 */}
@@ -960,10 +1329,178 @@ export default function JobsPage() {
                         className="font-mono text-xs"
                       />
                       <p className="text-xs text-muted-foreground">
-                        源数据的筛选条件，仅同步满足条件的数据
+                        源数据筛选，仅同步满足条件的数据。支持 <code className="rounded bg-muted px-1">status = &apos;active&apos; AND created_at &gt; &apos;2024-01-01&apos;</code>；SQL 源会下推到 WHERE，其它源在抽取后过滤。
                       </p>
                     </div>
 
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="enableVersionSnapshot"
+                        checked={form.enableVersionSnapshot}
+                        onCheckedChange={(v) => setForm({ ...form, enableVersionSnapshot: v === true })}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="enableVersionSnapshot">写入前保存版本快照</Label>
+                        <p className="text-xs text-muted-foreground">
+                          成功批次最多保留 200 条，可在执行详情中回滚到目标库。到期按保留天数自动清理。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>写入模式</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.writeMode}
+                          onChange={(e) => setForm({ ...form, writeMode: e.target.value })}
+                        >
+                          <option value="insert">仅插入</option>
+                          <option value="upsert" disabled={!targetAllowsUpsert}>存在则更新</option>
+                          <option value="update_only" disabled={!targetAllowsUpsert}>仅更新已有记录</option>
+                        </select>
+                        {!targetAllowsUpsert && form.targetDatasourceId && (
+                          <p className="text-xs text-muted-foreground">当前目标只支持追加写入，不能按匹配键更新已有记录。</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>冲突策略</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.conflictStrategy}
+                          onChange={(e) => setForm({ ...form, conflictStrategy: e.target.value })}
+                        >
+                          <option value="source_wins">源优先</option>
+                          <option value="target_wins">目标优先</option>
+                          <option value="newest_wins">时间优先</option>
+                          <option value="manual">人工介入（进死信）</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>匹配键</Label>
+                        <Input
+                          placeholder="username,employee_id"
+                          value={form.matchKeys}
+                          onChange={(e) => setForm({ ...form, matchKeys: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">逗号分隔。upsert / 冲突策略依赖匹配键查找目标已有记录。</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>冲突比较字段</Label>
+                        <Input
+                          placeholder="updated_at"
+                          value={form.conflictCompareField}
+                          onChange={(e) => setForm({ ...form, conflictCompareField: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">时间优先时比较该字段，未填则用整行指纹。</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>敏感字段</Label>
+                        <Input
+                          placeholder="可留空，自动识别手机/邮箱/身份证等"
+                          value={form.sensitiveFields}
+                          onChange={(e) => setForm({ ...form, sensitiveFields: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">留空则按字段名和内容自动识别，与手填字段合并后写入死信。</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>脱敏方式</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.desensitizeMode}
+                          onChange={(e) => setForm({ ...form, desensitizeMode: e.target.value })}
+                        >
+                          {DESENSITIZE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="enableChangeAudit"
+                        checked={form.enableChangeAudit}
+                        onCheckedChange={(v) => setForm({ ...form, enableChangeAudit: v === true })}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="enableChangeAudit">字段变更审计</Label>
+                        <p className="text-xs text-muted-foreground">
+                          更新目标记录时写入变更前后值，可在审计日志中查看。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>运行环境</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.environment}
+                          onChange={(e) => setForm({ ...form, environment: e.target.value })}
+                        >
+                          <option value="dev">dev</option>
+                          <option value="staging">staging</option>
+                          <option value="prod">prod</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>所属集成商</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.clientId || ''}
+                          onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+                        >
+                          <option value="">仅控制台可见</option>
+                          {partners.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.code})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          指派后，该集成商的 API Key 可以看见并触发此任务。
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>同步方向</Label>
+                        <select
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={form.syncDirection}
+                          onChange={(e) => setForm({ ...form, syncDirection: e.target.value })}
+                        >
+                          <option value="forward">单向</option>
+                          <option value="bidirectional">双向（防回环）</option>
+                          <option value="reverse">反向</option>
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          反向会在执行时对调源与目标，并翻转字段映射。双向需另配对端任务。
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>来源标记字段</Label>
+                        <Input
+                          value={form.originMarkerField}
+                          onChange={(e) => setForm({ ...form, originMarkerField: e.target.value })}
+                          placeholder="_ip_origin"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>对端任务 ID</Label>
+                        <Input
+                          value={form.pairJobId}
+                          onChange={(e) => setForm({ ...form, pairJobId: e.target.value })}
+                          placeholder="双向同步的另一条任务"
+                        />
+                      </div>
+                    </div>
                     <div className="rounded-md bg-amber-50 border border-amber-200 p-3">
                       <div className="flex gap-2">
                         <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -1013,6 +1550,31 @@ export default function JobsPage() {
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
               删除
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={!!orgJob} onOpenChange={(o) => !o && setOrgJob(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>组织架构 · {orgJob?.name}</DialogTitle>
+            <DialogDescription>该任务同步下来的部门树与人-部门关系</DialogDescription>
+          </DialogHeader>
+          {orgJob?.id && <OrgTreePanel jobId={orgJob.id} />}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!promoteId} onOpenChange={(o) => !o && setPromoteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>晋升到生产环境</AlertDialogTitle>
+            <AlertDialogDescription>
+              会复制当前任务及其源/目标数据源到 prod，生成新编码。Cron / 事件调度会保留；源任务若在运行或暂停，副本保持同一状态。原任务不受影响。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handlePromote}>确认晋升</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
