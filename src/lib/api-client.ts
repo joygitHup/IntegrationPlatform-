@@ -408,6 +408,9 @@ export const openApi = {
   register: (data: { name: string; code: string; description?: string; inviteCode?: string }) =>
     apiClient.post<any>('/open/register', data),
   sdk: () => apiClient.get<any>('/open/sdk'),
+  buildSdk: () => apiClient.post<any>('/open/sdk/build', {}),
+  downloadSdkUrl: (filename: string) =>
+    `${(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '')}/open/sdk/download?file=${encodeURIComponent(filename)}`,
 };
 
 export const snapshotsApi = {

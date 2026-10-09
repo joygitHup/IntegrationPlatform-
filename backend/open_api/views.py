@@ -813,12 +813,31 @@ class OpenStatusView(APIView):
     def get(self, request):
         from django.conf import settings
 
+        from core.public_urls import api_base_url, api_prefix, canonical_issuer, public_origin
         from datasources.connectors.runtime import SUPPORTED_EXTRACT, SUPPORTED_LOAD
 
+        meta = request.META
         return Response({
             "status": "ok",
             "environment": getattr(settings, "ENVIRONMENT", "dev"),
             "queueBackend": getattr(settings, "QUEUE_BACKEND", None) or "memory",
+            "urls": {
+                # 静态对外口径：discovery / SDK baseUrl / 回调地址全部以此为准
+                "origin": public_origin(),
+                "apiPrefix": api_prefix(),
+                "apiBaseUrl": api_base_url(),
+                "issuer": canonical_issuer(),
+            },
+            "request": {
+                # 本次请求 Django 实际看到的信息；反代后若与 urls 不一致，
+                # 说明 Nginx 未透传 X-Forwarded-* 或未开 TRUST_PROXY_HEADERS
+                "host": request.get_host(),
+                "scheme": request.scheme,
+                "forwardedHost": meta.get("HTTP_X_FORWARDED_HOST", ""),
+                "forwardedProto": meta.get("HTTP_X_FORWARDED_PROTO", ""),
+                "forwardedFor": (meta.get("HTTP_X_FORWARDED_FOR", "") or "").split(",")[0].strip(),
+            },
+            "trustedProxyHeaders": bool(getattr(settings, "TRUST_PROXY_HEADERS", False)),
             "runtime": {
                 "extract": sorted(SUPPORTED_EXTRACT),
                 "load": sorted(SUPPORTED_LOAD),
@@ -909,11 +928,11 @@ class OpenSdkView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        from django.conf import settings
+        from core.public_urls import api_base_url, api_url
 
-        base = (getattr(settings, "PUBLIC_BASE_URL", "http://127.0.0.1:8000") or "").rstrip("/") + "/api"
+        base = api_base_url()
         return Response({
-            "openapi": "/api/open/openapi.json",
+            "openapi": api_url("/open/openapi.json"),
             "python": {
                 "install": "pip install -e sdk/python",
                 "path": "sdk/python",
@@ -933,5 +952,200 @@ class OpenSdkView(APIView):
                     "await hub.catalog()"
                 ),
             },
-            "generator": "npx @openapitools/openapi-generator-cli generate -i /api/open/openapi.json -g python -o ./generated",
+            "generator": f"npx @openapitools/openapi-generator-cli generate -i {api_url('/open/openapi.json')} -g python -o ./generated",
+            "builds": _list_sdk_builds(),
+            "latest": _latest_sdk_build(),
         })
+
+
+def _sdk_dist_dir() -> str:
+    import os
+    from django.conf import settings
+    # 项目根目录下的 sdk/python/dist
+    root = getattr(settings, "BASE_DIR", None)
+    if root is None:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # BASE_DIR 在本项目中通常指向 backend/，sdk 在上一级
+    return os.path.join(os.path.dirname(str(root)), "sdk", "python", "dist")
+
+
+def _list_sdk_builds() -> list[dict]:
+    """扫描 sdk/python/dist 目录，返回最近 10 次构建（按 mtime 倒序）。"""
+    import os
+    dist = _sdk_dist_dir()
+    if not os.path.isdir(dist):
+        return []
+    items = []
+    for name in os.listdir(dist):
+        full = os.path.join(dist, name)
+        if not os.path.isfile(full):
+            continue
+        if not (name.endswith(".whl") or name.endswith(".tar.gz")):
+            continue
+        stat = os.stat(full)
+        # 解析版本号：integration_hub-1.5.0-py3-none-any.whl → 1.5.0
+        # sdist: integration_hub-1.5.0.tar.gz → 1.5.0
+        stem = name
+        for suffix in (".whl", ".tar.gz"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        parts = stem.split("-")
+        version = parts[1] if len(parts) >= 2 else ""
+        items.append({
+            "filename": name,
+            "version": version,
+            "size": stat.st_size,
+            "sizeText": _human_size(stat.st_size),
+            "mtime": int(stat.st_mtime),
+            "kind": "wheel" if name.endswith(".whl") else "sdist",
+            "downloadUrl": f"/api/open/sdk/download?file={name}",
+        })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return items[:10]
+
+
+def _latest_sdk_build() -> dict | None:
+    items = _list_sdk_builds()
+    wheels = [x for x in items if x["kind"] == "wheel"]
+    return wheels[0] if wheels else (items[0] if items else None)
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+class OpenSdkBuildView(APIView):
+    """触发构建 Python SDK wheel，返回新构建产物。仅平台账号可调用。"""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from audit.services import audit_from_request
+        assert_platform(request, "仅平台账号可构建 SDK")
+
+        import os
+        import subprocess
+        from django.conf import settings
+
+        dist = _sdk_dist_dir()
+        root = getattr(settings, "BASE_DIR", None)
+        if root is None:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sdk_dir = os.path.join(os.path.dirname(str(root)), "sdk", "python")
+        if not os.path.isdir(sdk_dir):
+            raise ApiError("SDK 源码目录不存在", 404)
+
+        # 选一个装了 build 模块的 python：venv → 当前进程 → PATH
+        import sys
+        candidates = [
+            os.path.join(str(root), ".venv", "Scripts", "python.exe"),
+            sys.executable,
+            "python",
+        ]
+
+        def _has_build(py: str) -> bool:
+            try:
+                r = subprocess.run(
+                    [py, "-m", "build", "--version"],
+                    capture_output=True, text=True, timeout=20,
+                )
+                return r.returncode == 0
+            except Exception:
+                return False
+
+        venv_python = next((p for p in candidates if _has_build(p)), "")
+        if not venv_python:
+            # 兜底：给 venv 装 build
+            venv_py = candidates[0]
+            try:
+                subprocess.run(
+                    [venv_py, "-m", "pip", "install", "--quiet", "build>=1.2"],
+                    capture_output=True, text=True, timeout=180,
+                )
+                venv_python = venv_py
+            except Exception:
+                raise ApiError("未找到可用的 python-build，请先 pip install build", 500)
+
+        # 自动写 local version 后缀（1.5.0+YYYYMMDD.HHMMSS），让每次构建产物
+        # 文件名不同、"最近 10 次构建"真实可累积；构建后无论成败恢复 pyproject
+        import re
+        from datetime import datetime
+        pyproject_path = os.path.join(sdk_dir, "pyproject.toml")
+        original_pyproject = ""
+        build_version = ""
+        if os.path.isfile(pyproject_path):
+            original_pyproject = open(pyproject_path, "r", encoding="utf-8").read()
+            m = re.search(r'^version\s*=\s*"([^"]+)"', original_pyproject, re.M)
+            base_version = m.group(1) if m else "0.0.0"
+            # 去掉已有 local 后缀
+            base_version = base_version.split("+")[0]
+            stamp = datetime.now().strftime("%Y%m%d.%H%M%S")
+            build_version = f"{base_version}+{stamp}"
+            updated = re.sub(
+                r'^(version\s*=\s*")[^"]+(")',
+                lambda mm: f"{mm.group(1)}{build_version}{mm.group(2)}",
+                original_pyproject, count=1, flags=re.M,
+            )
+            open(pyproject_path, "w", encoding="utf-8").write(updated)
+
+        try:
+            result = subprocess.run(
+                [venv_python, "-m", "build"],
+                cwd=sdk_dir,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            raise ApiError("构建超时（>180s）", 504)
+        finally:
+            if original_pyproject:
+                open(pyproject_path, "w", encoding="utf-8").write(original_pyproject)
+        if result.returncode != 0:
+            raise ApiError(f"构建失败: {result.stderr[-500:]}", 500)
+
+        builds = _list_sdk_builds()
+        latest = _latest_sdk_build()
+        audit_from_request(
+            request, action="BUILD_SDK", resource_type="SDK",
+            resource_name="integration_hub",
+            detail={"version": latest.get("version") if latest else None,
+                    "filename": latest.get("filename") if latest else None},
+        )
+        return Response({
+            "ok": True,
+            "latest": latest,
+            "builds": builds,
+            "stdoutTail": result.stdout[-500:] if result.stdout else "",
+        })
+
+
+class OpenSdkDownloadView(APIView):
+    """下载指定 SDK wheel/sdist 文件。"""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        import os
+        from django.http import FileResponse, Http404
+
+        filename = q(request, "file")
+        if not filename or "/" in filename or "\\" in filename or ".." in filename:
+            raise ApiError("非法文件名", 400)
+        if not (filename.endswith(".whl") or filename.endswith(".tar.gz")):
+            raise ApiError("仅支持 wheel / sdist 文件", 400)
+
+        full = os.path.join(_sdk_dist_dir(), filename)
+        if not os.path.isfile(full):
+            raise Http404("文件不存在")
+        ctype = "application/octet-stream"
+        if filename.endswith(".whl"):
+            ctype = "application/octet-stream"
+        resp = FileResponse(open(full, "rb"), content_type=ctype)
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp

@@ -14,6 +14,7 @@ from datetime import timedelta
 
 from core.exceptions import ApiError
 from core.ids import generate_id
+from core.public_urls import api_url
 from sso.models import Application, SsoAuthnRequest
 
 NS = {
@@ -53,12 +54,8 @@ def _all(el, name: str):
     return [c for c in el.iter() if _local(c.tag) == name]
 
 
-def public_base() -> str:
-    return (getattr(settings, "PUBLIC_BASE_URL", None) or "http://127.0.0.1:8000").rstrip("/")
-
-
 def acs_url(app: Application) -> str:
-    return app.callback_url or f"{public_base()}/api/sso/saml/acs/{app.id}"
+    return app.callback_url or api_url(f"/sso/saml/acs/{app.id}")
 
 
 def parse_idp_metadata(xml_text: str) -> dict:
@@ -116,7 +113,7 @@ def start_authn(app: Application, *, relay_state: str = "") -> dict:
     if not sso:
         raise ApiError("未配置 IdP SSO 地址（loginUrl 或 IdP Metadata）", 400)
     req_id = "_" + generate_id("saml")
-    entity_id = app.saml_sp_entity_id or f"{public_base()}/api/sso/saml/metadata/{app.id}"
+    entity_id = app.saml_sp_entity_id or api_url(f"/sso/saml/metadata/{app.id}")
     acs = acs_url(app)
     instant = datetime.now(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     xml = (
@@ -153,7 +150,7 @@ def start_authn(app: Application, *, relay_state: str = "") -> dict:
 
 
 def saml_metadata_xml(app: Application) -> str:
-    entity_id = app.saml_sp_entity_id or f"{public_base()}/api/sso/saml/metadata/{app.id}"
+    entity_id = app.saml_sp_entity_id or api_url(f"/sso/saml/metadata/{app.id}")
     acs = acs_url(app)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -232,7 +229,7 @@ def consume_response(app: Application, saml_response: str, *, relay_state: str =
             if now > until:
                 raise ApiError("断言已过期", 400)
         audience = _text(_find(conditions, ("Audience",)))
-        entity_id = app.saml_sp_entity_id or f"{public_base()}/api/sso/saml/metadata/{app.id}"
+        entity_id = app.saml_sp_entity_id or api_url(f"/sso/saml/metadata/{app.id}")
         if audience and audience not in (entity_id, app.code, app.id):
             raise ApiError("Audience 与 SP EntityID 不匹配", 400)
 

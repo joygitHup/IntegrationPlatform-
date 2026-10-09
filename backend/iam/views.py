@@ -217,8 +217,9 @@ def _try_send_reset_email(user, token: str) -> bool:
         import smtplib
         from email.mime.text import MIMEText
 
-        base_url = getattr(settings, "PUBLIC_BASE_URL", "")
-        link = f"{base_url}/reset-password?token={token}"
+        from core.public_urls import origin_url
+
+        link = origin_url(f"/reset-password?token={token}")
         msg = MIMEText(f"请点击以下链接重置密码：\n{link}\n\n链接有效期为 30 分钟。", "plain", "utf-8")
         msg["Subject"] = "密码重置 — 集成中台"
         msg["From"] = getattr(settings, "SMTP_FROM", "") or getattr(settings, "SMTP_USER", "") or "noreply@localhost"

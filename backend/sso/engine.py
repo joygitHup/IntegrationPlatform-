@@ -5,12 +5,37 @@ from datetime import timedelta
 from urllib.parse import quote, urlencode
 
 import jwt
+from django.db.models import Q
 from django.utils import timezone
 
 from core.encryption import encrypt
 from core.exceptions import ApiError
 from core.ids import generate_id
+from iam.models import RevokedToken
 from sso.models import Application, SsoAuditLog, SsoSession, SsoTicket, UserAppBinding
+
+
+def _sso_issuer() -> str:
+    """当前签发者标识（URL 形式，兼容 OIDC 标准库）。"""
+    from django.conf import settings
+    return getattr(settings, "SSO_ISSUER", "integration-platform")
+
+
+def _accepted_issuers() -> tuple[str, ...]:
+    """验签时接受的 iss：URL 形式 + 历史字符串（老 token 在 exp 内仍有效）。"""
+    return (_sso_issuer(), "integration-platform")
+
+
+def _is_jti_revoked(jti: str) -> bool:
+    """jti 是否在吊销黑名单（踢下线 / logout 时写入）。"""
+    return bool(jti) and RevokedToken.objects.filter(jti=jti).exists()
+
+
+def _is_session_inactive(jti: str) -> bool:
+    """jti 对应的 SsoSession 是否非 active（被吊销）。"""
+    if not jti:
+        return False
+    return SsoSession.objects.filter(external_session_id=jti).exclude(status="active").exists()
 
 
 def get_app(id_or_code: str) -> Application:
@@ -224,7 +249,7 @@ def launch_cross_app_sso(
     return result
 
 
-def _create_session(app: Application, user, login_type: str, ip: str, user_agent: str, expires_in: int) -> str:
+def _create_session(app: Application, user, login_type: str, ip: str, user_agent: str, expires_in: int, *, jti: str = "") -> str:
     session_id = generate_id("sso-sess")
     now = timezone.now()
     SsoSession.objects.create(
@@ -238,42 +263,61 @@ def _create_session(app: Application, user, login_type: str, ip: str, user_agent
         expires_at=now + timedelta(seconds=expires_in),
         ip=ip or "",
         user_agent=user_agent or "",
+        external_session_id=jti or "",  # P0 临时存 jti，便于后续吊销机制读出
     )
     return session_id
 
 
 def _jwt_login(app, user, redirect_path, ip, user_agent) -> dict:
-    if not app.secret_key:
+    settings = app.settings or {}
+    use_rsa = bool(settings.get("useRsa"))
+    if not use_rsa and not app.secret_key:
         raise ApiError("应用未配置密钥", 400)
     if not app.login_url:
         raise ApiError("应用未配置登录地址", 400)
-    expires_in = app.jwt_expires_in or 30
+    expires_in = app.jwt_expires_in or 300
     uid = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else "")
     username = getattr(user, "username", None) or (user.get("username") if isinstance(user, dict) else "")
     now = timezone.now()
+    jti = generate_id("jti")
     payload = {
         "sub": uid,
         "username": username,
         "email": getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else "") or "",
         "displayName": getattr(user, "display_name", None) or (user.get("displayName") if isinstance(user, dict) else username) or username,
         "roleId": getattr(user, "role_id", None) or (user.get("roleId") if isinstance(user, dict) else "") or "",
-        "iss": "integration-platform",
+        "iss": _sso_issuer(),
         "aud": app.code,
-        "jti": generate_id("jti"),
+        "jti": jti,
         "iat": now,
         "exp": now + timedelta(seconds=expires_in),
     }
-    token = jwt.encode(payload, app.secret_key, algorithm=app.jwt_algorithm or "HS256")
+    if use_rsa:
+        # P0 RS256：用中台 RSA 私钥签发，B 系统 SDK 通过 JWKS 公钥本地验签
+        from core.rsa import get_private_key, get_kid
+        token = jwt.encode(
+            payload, get_private_key(),
+            algorithm="RS256",
+            headers={"kid": get_kid()},
+        )
+    else:
+        token = jwt.encode(payload, app.secret_key, algorithm=app.jwt_algorithm or "HS256")
     sep = "&" if "?" in app.login_url else "?"
-    token_param = (app.settings or {}).get("tokenParamName") or "token"
+    token_param = settings.get("tokenParamName") or "token"
     url = f"{app.login_url}{sep}{token_param}={quote(token)}"
     if redirect_path:
         url += f"&redirect={quote(redirect_path)}"
-    session_id = _create_session(app, user, "jwt", ip, user_agent, expires_in)
+    session_id = _create_session(app, user, "jwt", ip, user_agent, expires_in, jti=jti)
     record_sso_audit(
         app_id=app.id, app_name=app.name, user_id=uid, username=username,
         event_type="login", login_type="jwt", result="success", ip=ip,
         user_agent=user_agent, session_id=session_id,
+        detail={
+            "jti": jti, "expiresIn": expires_in,
+            "loginUrl": app.login_url, "tokenParamName": token_param,
+            "useRsa": use_rsa, "redirectPath": redirect_path or "",
+            "tokenPreview": token[:32] + "..." if len(token) > 32 else token,
+        },
     )
     from monitor.metrics import observe_sso
     observe_sso(login_type="jwt", result="success")
@@ -355,14 +399,70 @@ def validate_ticket(ticket: str, *, app_id: str = "", ip: str = "", user_agent: 
     return {"valid": True, "user": row.user_info, "appId": row.app_id}
 
 
-def validate_sso_token(token: str) -> dict:
-    apps = Application.objects.filter(status="active").exclude(secret_key="")
-    for app in apps:
+def validate_sso_token(token: str, *, app_id: str = "") -> dict:
+    """校验目标应用回传的 SSO JWT。
+
+    优先走 P0 RS256 + JWKS 路径（中台私钥签发，B SDK 拉公钥本地验签；
+    这里也支持 B 回调中台 validate），失败再回退到老 HS256 多应用密钥匹配。
+
+    token 由平台按应用各自的 secret_key 签发，且 payload 带 aud=应用编码：
+    - 密钥匹配即证明 token 由平台为该应用签发，因此解码时关闭 PyJWT 默认的
+      audience 强校验（PyJWT 2.x 在未传 audience 时遇到 aud 会直接抛
+      InvalidAudienceError），改为手动比对 aud 与应用 code/id；
+    - 调用方指定 app_id 时只在该应用密钥下校验，避免跨应用误认。
+    """
+    # P0 优先：用 JWKS 公钥验签（中台 RSA 私钥签发的 RS256 token）
+    try:
+        from core.rsa import get_public_key, get_kid
+        pub_pem = get_public_key()
+        payload = jwt.decode(
+            token,
+            pub_pem,
+            algorithms=["RS256"],
+            options={"verify_aud": False, "verify_iss": False},
+        )
+        iss = payload.get("iss") or ""
+        if iss and iss not in _accepted_issuers():
+            raise jwt.InvalidIssuerError("iss 不匹配")
+        aud = payload.get("aud")
+        if app_id:
+            target = Application.objects.filter(id=app_id).first()
+            if target and aud and aud not in (target.code, target.id):
+                return {"valid": False, "error": "aud 与指定应用不匹配"}
+        elif aud:
+            target = Application.objects.filter(Q(code=aud) | Q(id=aud), status="active").first()
+            app_id = target.id if target else app_id
+        jti = payload.get("jti") or ""
+        if _is_jti_revoked(jti) or _is_session_inactive(jti):
+            return {"valid": False, "error": "token 已被吊销"}
+        return {"valid": True, "user": payload, "appId": app_id}
+    except jwt.PyJWTError:
+        pass
+    except Exception:
+        # JWKS 模块异常时回退到老逻辑
+        pass
+
+    # 回退：老 HS256 多应用密钥匹配（向后兼容）
+    qs = Application.objects.filter(status="active").exclude(secret_key="")
+    if app_id:
+        qs = qs.filter(id=app_id)
+    for app in qs:
         try:
-            payload = jwt.decode(token, app.secret_key, algorithms=[app.jwt_algorithm or "HS256"])
-            return {"valid": True, "user": payload, "appId": app.id}
+            payload = jwt.decode(
+                token,
+                app.secret_key,
+                algorithms=[app.jwt_algorithm or "HS256"],
+                options={"verify_aud": False},
+            )
         except jwt.PyJWTError:
             continue
+        aud = payload.get("aud")
+        if aud and aud not in (app.code, app.id):
+            continue
+        jti = payload.get("jti") or ""
+        if _is_jti_revoked(jti) or _is_session_inactive(jti):
+            return {"valid": False, "error": "token 已被吊销"}
+        return {"valid": True, "user": payload, "appId": app.id}
     return {"valid": False, "error": "无效 token"}
 
 

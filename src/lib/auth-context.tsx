@@ -82,9 +82,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const meResult = await authApi.me();
       setUser(meResult.user);
     }
-    const from = typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('from')
-      : null;
+    const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const from = searchParams?.get('from') || null;
+    const isOauth = searchParams?.get('oauth') === '1';
+    // OAuth 授权码流程：带 token 跳回后端 /oauth/authorize 完成授权
+    if (isOauth && from) {
+      const sep = from.includes('?') ? '&' : '?';
+      window.location.href = `${from}${sep}token=${encodeURIComponent(result.accessToken)}`;
+      return;
+    }
     router.push(safeRedirectPath(from));
   };
 

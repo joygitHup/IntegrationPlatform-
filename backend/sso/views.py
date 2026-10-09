@@ -3,6 +3,7 @@ from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -160,7 +161,7 @@ class BindingView(APIView):
         binding_id = create_binding(
             target,
             app_id,
-            external_user_id=request.data.get("externalUserId") or "",
+            external_user_id=request.data.get("externalUserId") or request.data.get("external_user_id") or "",
             credentials=request.data.get("credentials"),
         )
         audit_from_request(request, action="CREATE", resource_type="APP_BINDING", resource_id=binding_id)
@@ -178,10 +179,16 @@ class BindingView(APIView):
         linked_app = Application.objects.filter(id=obj.app_id).first()
         if linked_app is not None:
             assert_object_owned(linked_app, request, not_found="绑定不存在")
-        if request.data.get("externalUserId") is not None:
-            obj.external_user_id = request.data.get("externalUserId")
-        if request.data.get("externalUsername") is not None:
-            obj.external_username = request.data.get("externalUsername")
+        external_user_id = request.data.get("externalUserId")
+        if external_user_id is None:
+            external_user_id = request.data.get("external_user_id")
+        if external_user_id is not None:
+            obj.external_user_id = external_user_id
+        external_username = request.data.get("externalUsername")
+        if external_username is None:
+            external_username = request.data.get("external_username")
+        if external_username is not None:
+            obj.external_username = external_username
         if request.data.get("credentials") is not None:
             import json
 
@@ -211,13 +218,14 @@ class SsoLoginView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        app_id = request.data.get("appId")
+        # CamelCaseJSONParser 会把请求体键转为 snake_case，这里两种写法都兼容
+        app_id = request.data.get("appId") or request.data.get("app_id")
         if not app_id:
             raise ApiError("缺少 appId", 400)
         get_owned(Application, app_id, request, not_found="应用不存在")
         result = initiate_sso_login(
             app_id, request.auth_ctx.user or request.user,
-            redirect_path=request.data.get("redirectUrl") or "",
+            redirect_path=request.data.get("redirectUrl") or request.data.get("redirect_url") or "",
             ip=request.auth_ctx.ip,
             user_agent=request.auth_ctx.user_agent,
         )
@@ -231,6 +239,40 @@ class SsoLoginView(APIView):
         result = initiate_sso_login(
             app_id, request.auth_ctx.user or request.user,
             redirect_path=q(request, "redirect") or "",
+            ip=request.auth_ctx.ip,
+            user_agent=request.auth_ctx.user_agent,
+        )
+        url = result.get("url") or result.get("loginUrl")
+        if url:
+            from django.shortcuts import redirect
+            return redirect(url)
+        return Response(result)
+
+
+class SsoRedirectView(APIView):
+    """跳板模式（P1）：A 用中台 JWT 调此接口，中台 302 到 B 落地页。
+
+    GET /api/sso/redirect?to=app_b&redirect=/dashboard
+    Authorization: Bearer <A 在中台登录后的 JWT>
+
+    - 不需要 A 自己签 token、不需要 A 持 B 的 secret_key
+    - 中台识别 A 的会话 → 用 B 的 RS256/HS256 签发 → 302 到 B
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        target_ref = q(request, "to", "targetApp", "targetAppId", "target_app_id")
+        if not target_ref:
+            raise ApiError("缺少 to（目标应用 code 或 id）", 400)
+        from django.db.models import Q
+        target = (
+            Application.objects.filter(Q(id=target_ref) | Q(code=target_ref), status="active").first()
+        )
+        if not target:
+            raise ApiError("目标应用不存在或未启用", 404)
+        result = initiate_sso_login(
+            target.id, request.auth_ctx.user or request.user,
+            redirect_path=q(request, "redirect", "redirectUrl") or "",
             ip=request.auth_ctx.ip,
             user_agent=request.auth_ctx.user_agent,
         )
@@ -307,7 +349,7 @@ class SsoValidateView(APIView):
         if ticket:
             return validate_ticket(ticket, app_id=app_id or "", ip=ip, user_agent=ua)
         if token:
-            return validate_sso_token(token)
+            return validate_sso_token(token, app_id=app_id or "")
         raise ApiError("缺少 ticket 或 token", 400)
 
 
@@ -343,10 +385,29 @@ class SsoSessionView(APIView):
 
     def delete(self, request):
         from django.utils import timezone
+        from iam.models import RevokedToken
+        from core.ids import generate_id
+
+        def _blacklist(session) -> None:
+            """把会话 jti 写入吊销黑名单，validate 立即拒绝该 token。"""
+            jti = session.external_session_id or ""
+            if jti:
+                RevokedToken.objects.get_or_create(
+                    jti=jti,
+                    defaults={
+                        "id": generate_id("rev"),
+                        "token_type": "access",
+                        "user_id": session.user_id or "",
+                        "expires_at": session.expires_at,
+                    },
+                )
 
         if q(request, "all") == "true":
             qs = SsoSession.objects.filter(user_id=request.auth_ctx.user_id, status="active")
-            count = qs.count()
+            sessions = list(qs)
+            for s in sessions:
+                _blacklist(s)
+            count = len(sessions)
             qs.update(status="revoked", logout_at=timezone.now(), logout_type="user_initiated")
             return Response({"success": True, "revokedCount": count})
         session_id = q(request, "sessionId")
@@ -360,6 +421,7 @@ class SsoSessionView(APIView):
             if not has_permission(request.auth_ctx, "sso:manage"):
                 raise ApiError("权限不足", 403)
             assert_object_owned(session, request, not_found="会话不存在")
+        _blacklist(session)
         session.status = "revoked"
         session.logout_at = timezone.now()
         session.logout_type = "user_initiated"
@@ -508,13 +570,22 @@ class OAuthCallbackView(APIView):
 
 
 class OAuthServerAuthorizeView(APIView):
-    """平台作为授权服务器：登录用户授权第三方应用。"""
-    permission_classes = [IsAuthenticated]
+    """平台作为授权服务器：浏览器授权码流程。
+
+    标准 OIDC 库（next-auth / python-social-auth）把用户浏览器重定向到
+    本端点。未登录用户会被 302 跳到控制台登录页（CONSOLE_LOGIN_URL），
+    登录后控制台带 token 跳回本端点完成授权。
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    renderer_classes = [JSONRenderer]
 
     def get(self, request):
         from sso.oauth import issue_authorization_code
         from urllib.parse import urlencode
         from django.shortcuts import redirect
+        from django.conf import settings as dj_settings
+        from core.public_urls import public_origin
 
         client_id = q(request, "client_id")
         redirect_uri = q(request, "redirect_uri") or ""
@@ -529,8 +600,52 @@ class OAuthServerAuthorizeView(APIView):
         )
         if not app:
             raise ApiError("unknown client_id", 400)
-        assert_object_owned(app, request, not_found="应用不存在")
-        code = issue_authorization_code(app, request.user, redirect_uri=redirect_uri, scope=scope)
+
+        # 判定用户身份（三路）：一次性 query token（用后入 session）/ Django session / Authorization Bearer JWT
+        user = None
+        token_query = q(request, "token")
+        if token_query:
+            from core.jwt import verify_token
+            from iam.models import User
+            payload = verify_token(token_query)
+            if not payload or payload.get("type") != "access":
+                raise ApiError("invalid_token", 401)
+            user = User.objects.filter(id=payload.get("userId")).first()
+            if not user or user.status != "active":
+                raise ApiError("invalid_token", 401)
+            # 写入 session 供后续浏览器导航复用，token 不再出现在 URL 中
+            request.session["sso_oauth_user_id"] = user.id
+            # 302 到自己（去掉 token 参数，保留其它参数）
+            params = {k: v for k, v in request.GET.items() if k != "token"}
+            new_qs = urlencode(params)
+            return redirect(f"{request.path}{'?' + new_qs if new_qs else ''}")
+
+        if not user:
+            sess_uid = request.session.get("sso_oauth_user_id")
+            if sess_uid:
+                from iam.models import User
+                user = User.objects.filter(id=sess_uid, status="active").first()
+
+        if not user:
+            auth = request.META.get("HTTP_AUTHORIZATION") or ""
+            if auth.startswith("Bearer ") and not auth[7:].startswith("ipk_"):
+                from core.jwt import verify_token
+                from iam.models import User
+                payload = verify_token(auth[7:].strip())
+                if payload and payload.get("type") == "access":
+                    user = User.objects.filter(id=payload.get("userId"), status="active").first()
+
+        if not user:
+            # 未登录：302 到控制台登录页，登录后控制台带 token 跳回本端点
+            # 用静态口径拼装回调 URL，避免反代后 build_absolute_uri 生成内网地址
+            self_url = public_origin() + request.get_full_path()
+            login_url = getattr(dj_settings, "CONSOLE_LOGIN_URL", "") or "/login"
+            qs = urlencode({"from": self_url, "oauth": "1"})
+            sep = "&" if "?" in login_url else "?"
+            return redirect(f"{login_url}{sep}{qs}")
+
+        # 用户已认证：签发 code 并跳转到回调
+        code = issue_authorization_code(app, user, redirect_uri=redirect_uri, scope=scope)
         target = redirect_uri or app.callback_url
         if not target:
             return Response({"code": code, "state": state})
@@ -543,26 +658,37 @@ class OAuthServerTokenView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
     parser_classes = [FormParser, JSONParser, MultiPartParser]
+    # RFC 6749 响应字段固定 snake_case（access_token/expires_in/token_type）
+    renderer_classes = [JSONRenderer]
 
     def post(self, request):
-        from sso.oauth import exchange_code
+        from sso.oauth import exchange_code, exchange_refresh_token
 
         data = request.POST if request.POST else request.data
         grant = data.get("grant_type") or "authorization_code"
-        if grant != "authorization_code":
+        if grant == "authorization_code":
+            result = exchange_code(
+                client_id=data.get("client_id") or "",
+                client_secret=data.get("client_secret") or "",
+                code=data.get("code") or "",
+                redirect_uri=data.get("redirect_uri") or "",
+            )
+        elif grant == "refresh_token":
+            result = exchange_refresh_token(
+                client_id=data.get("client_id") or "",
+                client_secret=data.get("client_secret") or "",
+                refresh_token=data.get("refresh_token") or "",
+            )
+        else:
             raise ApiError("unsupported_grant_type", 400)
-        result = exchange_code(
-            client_id=data.get("client_id") or "",
-            client_secret=data.get("client_secret") or "",
-            code=data.get("code") or "",
-            redirect_uri=data.get("redirect_uri") or "",
-        )
         return Response(result)
 
 
 class OAuthServerUserinfoView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    # OIDC 标准 claim（sub/preferred_username…）不允许 camelCase 改写
+    renderer_classes = [JSONRenderer]
 
     def get(self, request):
         from sso.oauth import userinfo_from_token

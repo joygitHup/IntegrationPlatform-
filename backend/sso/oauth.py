@@ -10,11 +10,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import jwt
-from django.conf import settings
 from django.utils import timezone
 
 from core.exceptions import ApiError
 from core.ids import generate_id
+from core.public_urls import canonical_issuer
 from sso.models import Application, OAuthAuthorizationCode, OAuthState
 
 
@@ -22,12 +22,10 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def public_base() -> str:
-    return (getattr(settings, "PUBLIC_BASE_URL", None) or "http://127.0.0.1:8000").rstrip("/")
-
-
 def callback_uri(app: Application) -> str:
-    return f"{public_base()}/api/sso/oauth2/{app.id}/callback"
+    from core.public_urls import api_url
+
+    return api_url(f"/sso/oauth2/{app.id}/callback")
 
 
 def start_authorization(app: Application, *, user=None, redirect_uri: str = "", extra_state: str = "") -> dict:
@@ -285,18 +283,137 @@ def exchange_code(*, client_id: str, client_secret: str, code: str, redirect_uri
         "username": getattr(user, "username", "") if user else "",
         "email": getattr(user, "email", "") if user else "",
         "displayName": getattr(user, "display_name", "") if user else "",
-        "iss": "integration-platform",
+        "iss": canonical_issuer(),
         "aud": app.code,
         "scope": row.scope,
         "iat": now,
         "exp": now + timedelta(seconds=app.jwt_expires_in or 3600),
     }
     token = jwt.encode(payload, secret, algorithm=app.jwt_algorithm or "HS256")
+    refresh = _issue_refresh_token(app, user, row.scope, secret)
     return {
         "access_token": token,
         "token_type": "Bearer",
         "expires_in": app.jwt_expires_in or 3600,
+        "refresh_token": refresh,
         "scope": row.scope,
+    }
+
+
+def _issue_refresh_token(app: Application, user, scope: str, secret: str) -> str:
+    """签发无状态 refresh token JWT（7d TTL，含 jti 供轮换/吊销追踪）。
+
+    用 app 密钥签名，与 access token 同密钥不同 payload（type=refresh）。
+    轮换：使用时把旧 jti 写入 RevokedToken，签发新 refresh token。
+    """
+    import uuid
+    from datetime import timedelta
+
+    # refresh token TTL：默认 7d，可通过 app.settings.refreshExpiresIn 覆盖
+    extra = app.settings if isinstance(app.settings, dict) else {}
+    refresh_ttl = int(extra.get("refreshExpiresIn") or extra.get("refresh_expires_in") or 7 * 24 * 3600)
+
+    now = timezone.now()
+    user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else "")
+    username = getattr(user, "username", None) or (user.get("username") if isinstance(user, dict) else "")
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "iss": canonical_issuer(),
+        "aud": app.code,
+        "scope": scope,
+        "type": "refresh",
+        "iat": now,
+        "exp": now + timedelta(seconds=refresh_ttl),
+        "jti": uuid.uuid4().hex,
+    }
+    return jwt.encode(payload, secret, algorithm=app.jwt_algorithm or "HS256")
+
+
+def exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token: str) -> dict:
+    """refresh_token grant：校验 + 轮换 + 签发新 access/refresh token。
+
+    RFC 6749 §6：B 端用 refresh_token 换新 access_token；最佳实践是
+    轮换（旧 refresh 立即作废，签发新 refresh），防止 refresh 被盗用。
+    """
+    app = (
+        Application.objects.filter(oauth_client_id=client_id).first()
+        or Application.objects.filter(code=client_id).first()
+        or Application.objects.filter(id=client_id).first()
+    )
+    if not app:
+        raise ApiError("invalid_client", 401)
+    secret = app.oauth_client_secret or app.secret_key
+    if not secret or secret != client_secret:
+        raise ApiError("invalid_client", 401)
+    try:
+        payload = jwt.decode(
+            refresh_token, secret,
+            algorithms=[app.jwt_algorithm or "HS256"],
+            audience=app.code,
+            options={"verify_aud": True, "verify_iss": False},
+            leeway=30,
+        )
+    except jwt.PyJWTError as exc:
+        raise ApiError("invalid_grant: refresh_token 无效或已过期", 400) from exc
+    if payload.get("type") != "refresh":
+        raise ApiError("invalid_grant: token 类型错误", 400)
+
+    from iam.models import RevokedToken
+    from django.utils import timezone as _tz
+    from datetime import timedelta
+
+    jti = payload.get("jti") or ""
+    if jti and RevokedToken.objects.filter(jti=jti).exists():
+        # 旧 refresh 已被吊销/轮换过：拒绝，防止重放
+        raise ApiError("invalid_grant: refresh_token 已被使用", 400)
+
+    # 轮换：把旧 jti 加入黑名单（按 refresh token 自身的 exp 设黑名单过期时间）
+    exp_ts = payload.get("exp")
+    revoked_expires = _tz.now() + timedelta(seconds=7 * 24 * 3600)
+    if exp_ts:
+        try:
+            from datetime import datetime
+            revoked_expires = datetime.fromtimestamp(int(exp_ts), tz=_tz.utc if hasattr(_tz, "utc") else None)
+        except (TypeError, ValueError, OSError):
+            pass
+    RevokedToken.objects.get_or_create(
+        jti=jti,
+        defaults={
+            "id": generate_id("rev"),
+            "user_id": payload.get("sub", ""),
+            "expires_at": revoked_expires,
+        },
+    )
+
+    from iam.models import User
+    user = User.objects.filter(id=payload.get("sub")).first()
+    if not user:
+        raise ApiError("invalid_grant: 用户不存在", 400)
+    if user.status != "active":
+        raise ApiError("invalid_grant: 账号已被禁用", 400)
+
+    scope = payload.get("scope") or app.oauth_scope or "openid profile"
+    now = timezone.now()
+    access_payload = {
+        "sub": user.id,
+        "username": user.username,
+        "email": user.email or "",
+        "displayName": user.display_name or "",
+        "iss": canonical_issuer(),
+        "aud": app.code,
+        "scope": scope,
+        "iat": now,
+        "exp": now + timedelta(seconds=app.jwt_expires_in or 3600),
+    }
+    access = jwt.encode(access_payload, secret, algorithm=app.jwt_algorithm or "HS256")
+    new_refresh = _issue_refresh_token(app, user, scope, secret)
+    return {
+        "access_token": access,
+        "token_type": "Bearer",
+        "expires_in": app.jwt_expires_in or 3600,
+        "refresh_token": new_refresh,
+        "scope": scope,
     }
 
 

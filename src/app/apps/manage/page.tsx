@@ -27,6 +27,7 @@ import {
   Settings,
   Eye,
   EyeOff,
+  Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -245,7 +246,7 @@ export default function AppsManagePage() {
                 <thead>
                   <tr className="border-b bg-muted/30">
                     <th className="px-4 py-3 text-left font-medium">应用名称</th>
-                    <th className="px-4 py-3 text-left font-medium">编码</th>
+                    <th className="px-4 py-3 text-left font-medium">AppID / 编码</th>
                     <th className="px-4 py-3 text-left font-medium">分类</th>
                     <th className="px-4 py-3 text-left font-medium">登录方式</th>
                     <th className="px-4 py-3 text-left font-medium">状态</th>
@@ -277,7 +278,26 @@ export default function AppsManagePage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{app.code}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <span className="font-mono text-xs text-muted-foreground">{app.id}</span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(app.id);
+                                  toast.success('AppID 已复制');
+                                }}
+                                title="复制 AppID"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                            <div className="font-mono text-xs text-muted-foreground/70">{app.code}</div>
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
                           {CATEGORY_OPTIONS.find((c) => c.value === app.category)?.label || app.category}
                         </td>

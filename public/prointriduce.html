@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集成中台 Integration Platform | 企业级数据集成 · SSO 单点登录 · 开放 API 平台</title>
+<meta name="description" content="集成中台（Integration Platform）是企业级一体化集成平台：26+ 连接器免开发对接 MySQL、Oracle、达梦、钉钉、企微、用友等系统；支持 JWT / Ticket / OAuth2 / SAML 五种单点登录模式；数据集成任务调度、DAG 编排、死信处理、字段级审计；开放 API + Python/TypeScript SDK；支持 SaaS 与私有化部署，适配信创环境。">
+<meta name="keywords" content="集成中台,iPaaS,数据集成平台,单点登录,SSO,企业集成,API 开放平台,ETL,数据同步,身份认证,中间件,信创,私有化部署,SaaS,钉钉对接,企业微信对接,用友对接,达梦数据库,人大金仓">
+<meta name="author" content="Integration Platform Team">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="canonical" href="https://integrationplatform.example.com/prointriduce.html">
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://integrationplatform.example.com/prointriduce.html">
+<meta property="og:title" content="集成中台 Integration Platform | 企业级数据集成 · SSO · 开放 API">
+<meta property="og:description" content="26+ 连接器免开发对接，五种 SSO 模式，DAG 编排与字段级审计，支持 SaaS 与私有化部署。">
+<meta property="og:locale" content="zh_CN">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="集成中台 Integration Platform | 企业级数据集成 · SSO · 开放 API">
+<meta name="twitter:description" content="26+ 连接器免开发对接，五种 SSO 模式，DAG 编排与字段级审计，支持 SaaS 与私有化部署。">
+<!-- GEO：AI 引擎实体定义 -->
+<meta name="geo:product" content="Integration Platform / 集成中台">
+<meta name="geo:category" content="Enterprise Software / iPaaS / Data Integration / SSO">
+<meta name="geo:features" content="26+ connectors, JWT/Ticket/OAuth2/SAML SSO, DAG orchestration, field-level audit, dead letter queue, open API, Python/TypeScript SDK, SaaS & private deployment, Xinchuang compatibility">
+<meta name="geo:pricing" content="Free trial / Standard ¥98,000 per year / Professional ¥298,000 per year / Enterprise from ¥600,000">
+<!-- JSON-LD：Product + FAQ + BreadcrumbList -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": "集成中台 Integration Platform",
+  "alternateName": ["Integration Platform", "集成中台", "企业集成中台", "iPaaS"],
+  "description": "企业级一体化集成平台：统一身份认证、数据集成、任务调度、单点登录与开放 API。支持 26+ 连接器、五种 SSO 模式、DAG 编排、字段级审计，支持 SaaS 与私有化部署。",
+  "brand": { "@type": "Brand", "name": "Integration Platform" },
+  "category": "Enterprise Software > Middleware > Integration Platform",
+  "url": "https://integrationplatform.example.com/prointriduce.html",
+  "offers": [
+    { "@type": "Offer", "name": "试用版", "price": "0", "priceCurrency": "CNY", "description": "30 天试用，全部连接器可用，3 个集成任务，单环境，月度 10 万行数据量", "availability": "https://schema.org/InStock" },
+    { "@type": "Offer", "name": "标准版", "price": "98000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "30 个集成任务，dev/staging/prod 三环境，SSO 全模式，月度 500 万行数据量", "availability": "https://schema.org/InStock" },
+    { "@type": "Offer", "name": "专业版", "price": "298000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "集成任务不限量，DAG 编排，快照回滚，开放 API + 双 SDK，集成商运营模式，数据量不限", "availability": "https://schema.org/InStock" },
+    { "@type": "Offer", "name": "旗舰版·私有化", "price": "600000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "源码级交付选项，信创适配，高可用架构，定制连接器 2 个/年，SLA 99.9%", "availability": "https://schema.org/InStock" }
+  ],
+  "featureList": "26+ connectors, JWT SSO, Ticket SSO, OAuth2 PKCE, SAML 2.0, OIDC Discovery, DAG orchestration, dead letter queue, snapshot rollback, field-level audit, data masking, open API, Python SDK, TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, SaaS deployment, private deployment, Xinchuang compatibility",
+  "softwareRequirements": "PostgreSQL 12+, Redis 6+ (production)",
+  "operatingSystem": "Linux, Windows, Kylin OS"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "会影响我们现有系统吗？需要在原系统装东西吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "不需要。所有连接器通过数据库账号、API 或文件协议对接，原系统无需安装任何组件。只读场景只读取，写入场景按你授予的权限范围操作。" }
+    },
+    {
+      "@type": "Question",
+      "name": "订阅到期后数据和任务会怎样？",
+      "acceptedAnswer": { "@type": "Answer", "text": "到期前 30 天开始提醒。到期后任务暂停调度但配置与历史数据保留 90 天，续费即恢复；私有化买断无此限制。支持到期前全量导出配置与数据。" }
+    },
+    {
+      "@type": "Question",
+      "name": "月度数据量怎么计算？超了怎么办？",
+      "acceptedAnswer": { "@type": "Answer", "text": "按成功写入目标端的行数计。SaaS 模式下超限自动拦截并告警（不会静默产生费用），可购买扩容包当月生效；私有化模式只告警不拦截。" }
+    },
+    {
+      "@type": "Question",
+      "name": "我们有一套自研系统不在连接器清单里，能接吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "可以。自研系统只要能提供数据库账号、HTTP API 或文件导出，就能用现有通用连接器接入；只有界面没有接口的系统，可采购定制连接器开发服务。" }
+    },
+    {
+      "@type": "Question",
+      "name": "从标准版升级到专业版，已配置的任务要重做吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "不用。版本升级仅解锁能力，所有数据源、任务、映射配置原样保留，平滑升级。" }
+    },
+    {
+      "@type": "Question",
+      "name": "支持信创环境吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "旗舰私有化版支持达梦、人大金仓数据库与麒麟操作系统，连接器本身即含国产数据库类型。其他版本可按需评估适配。" }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "首页", "item": "https://integrationplatform.example.com/" },
+    { "@type": "ListItem", "position": 2, "name": "产品介绍与商业方案", "item": "https://integrationplatform.example.com/prointriduce.html" }
+  ]
+}
+</script>
+<style>
+  :root {
+    --bg0: #060b18;
+    --bg1: #0a1224;
+    --bg2: #0e1830;
+    --card: rgba(255,255,255,.04);
+    --card-brd: rgba(120,160,255,.14);
+    --cyan: #22d3ee;
+    --blue: #3b82f6;
+    --blue-deep: #2563eb;
+    --violet: #818cf8;
+    --txt: #e6edf7;
+    --txt-2: #9fb0c9;
+    --txt-3: #6b7c99;
+    --gold: #fbbf24;
+    --green: #34d399;
+    --radius: 14px;
+    --grad: linear-gradient(90deg, #22d3ee, #3b82f6, #818cf8);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    color: var(--txt);
+    background: var(--bg0);
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+  /* 全局网格底纹 */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(90,130,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(90,130,255,.05) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 30%, transparent 75%);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+  section { padding: 88px 0; position: relative; }
+  h2 {
+    font-size: 34px; font-weight: 800; letter-spacing: .5px; margin-bottom: 10px;
+    background: linear-gradient(180deg, #fff, #b9c8e4);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .sub { color: var(--txt-3); font-size: 15px; margin-bottom: 44px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--cyan); margin-bottom: 18px;
+  }
+  .tag::before { content: ""; width: 24px; height: 1px; background: var(--cyan); }
+
+  /* ===== 顶栏 ===== */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    backdrop-filter: blur(16px); background: rgba(6,11,24,.72);
+    border-bottom: 1px solid rgba(120,160,255,.1);
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .logo { font-weight: 800; font-size: 17px; letter-spacing: .5px; color: #fff; text-decoration: none; }
+  .logo em { font-style: normal; background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .nav-links { display: flex; gap: 28px; }
+  .nav-links a { color: var(--txt-2); text-decoration: none; font-size: 14px; transition: color .2s; }
+  .nav-links a:hover { color: #fff; }
+  .nav-cta { font-size: 13px; font-weight: 600; color: #061018 !important; background: var(--cyan); padding: 8px 18px; border-radius: 6px; }
+
+  /* ===== Hero ===== */
+  .hero { padding: 176px 0 100px; text-align: center; position: relative; }
+  .hero::after {
+    content: ""; position: absolute; top: -180px; left: 50%; transform: translateX(-50%);
+    width: 900px; height: 500px; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(59,130,246,.22), transparent 65%);
+    filter: blur(10px);
+  }
+  .hero .badge {
+    display: inline-block; font-size: 13px; color: var(--cyan);
+    border: 1px solid rgba(34,211,238,.35); background: rgba(34,211,238,.08);
+    padding: 6px 18px; border-radius: 999px; letter-spacing: 1px; margin-bottom: 26px;
+  }
+  .hero h1 {
+    font-size: 56px; font-weight: 900; letter-spacing: 1px; line-height: 1.22; margin-bottom: 20px;
+    background: linear-gradient(180deg, #ffffff 20%, #7ea4e8 90%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { font-size: 17px; color: var(--txt-2); max-width: 700px; margin: 0 auto; }
+  .hero .cta { margin-top: 42px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 14px 34px; border-radius: 8px; font-size: 15px; font-weight: 700; text-decoration: none; letter-spacing: .5px; transition: transform .15s, box-shadow .2s; }
+  .btn-primary { background: var(--grad); color: #fff; box-shadow: 0 6px 28px rgba(59,130,246,.4); }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 36px rgba(59,130,246,.55); }
+  .btn-ghost { border: 1px solid rgba(160,190,255,.35); color: var(--txt); background: rgba(255,255,255,.03); }
+  .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+  .hero-stats {
+    margin: 72px auto 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px; background: rgba(120,160,255,.14); border: 1px solid rgba(120,160,255,.14);
+    border-radius: var(--radius); overflow: hidden; max-width: 880px;
+  }
+  .hero-stats > div { background: rgba(10,18,36,.9); padding: 26px 12px; }
+  .hero-stats .num {
+    font-size: 34px; font-weight: 900; font-variant-numeric: tabular-nums;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero-stats .lbl { font-size: 12px; color: var(--txt-3); margin-top: 4px; letter-spacing: 1px; }
+
+  /* ===== 通用卡片 ===== */
+  .grid { display: grid; gap: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--card-brd); border-radius: var(--radius);
+    padding: 28px; position: relative; transition: border-color .25s, transform .25s, box-shadow .25s;
+  }
+  .card:hover { border-color: rgba(34,211,238,.45); transform: translateY(-3px); box-shadow: 0 14px 40px rgba(2,8,23,.6); }
+
+  /* ===== 痛点 ===== */
+  .pain-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .pain .idx { font-size: 12px; color: var(--cyan); font-weight: 700; letter-spacing: 2px; margin-bottom: 12px; }
+  .pain .t { font-weight: 700; font-size: 16px; margin-bottom: 8px; color: #fff; }
+  .pain .d { font-size: 13.5px; color: var(--txt-3); }
+
+  /* ===== 能力 ===== */
+  .cap-grid { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+  .cap h3 { font-size: 17px; margin: 16px 0 8px; color: #fff; }
+  .cap p { font-size: 13.5px; color: var(--txt-3); }
+  .cap .ico {
+    width: 52px; height: 52px; border-radius: 13px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, rgba(34,211,238,.14), rgba(129,140,248,.14));
+    border: 1px solid rgba(34,211,238,.3);
+    position: relative;
+    animation: ico-float 4s ease-in-out infinite;
+  }
+  .cap .ico svg { width: 26px; height: 26px; stroke: var(--cyan); transition: stroke .3s; }
+  /* 光晕呼吸 */
+  .cap .ico::after {
+    content: ""; position: absolute; inset: -1px; border-radius: 13px; pointer-events: none;
+    box-shadow: 0 0 18px rgba(34,211,238,.28), inset 0 0 10px rgba(34,211,238,.08);
+    animation: ico-glow 3s ease-in-out infinite;
+  }
+  /* 每张卡片图标错相位，避免整齐划一的机械感 */
+  .cap:nth-child(2) .ico, .cap:nth-child(2) .ico::after { animation-delay: -.7s; }
+  .cap:nth-child(3) .ico, .cap:nth-child(3) .ico::after { animation-delay: -1.4s; }
+  .cap:nth-child(4) .ico, .cap:nth-child(4) .ico::after { animation-delay: -2.1s; }
+  .cap:nth-child(5) .ico, .cap:nth-child(5) .ico::after { animation-delay: -2.8s; }
+  .cap:nth-child(6) .ico, .cap:nth-child(6) .ico::after { animation-delay: -3.5s; }
+  /* 悬浮卡片时图标点亮并旋转 */
+  .cap:hover .ico { animation-play-state: paused; transform: rotate(-8deg) scale(1.1); border-color: var(--cyan); transition: transform .35s cubic-bezier(.34,1.56,.64,1), border-color .3s; }
+  .cap:hover .ico svg { stroke: #67e8f9; filter: drop-shadow(0 0 6px rgba(34,211,238,.8)); }
+  .cap:hover .ico::after { box-shadow: 0 0 26px rgba(34,211,238,.5), inset 0 0 14px rgba(34,211,238,.15); animation: none; }
+  @keyframes ico-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  @keyframes ico-glow {
+    0%, 100% { opacity: .55; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cap .ico, .cap .ico::after { animation: none; }
+  }
+  .cap ul { margin: 14px 0 0; list-style: none; }
+  .cap ul li { font-size: 13px; color: var(--txt-2); padding: 3px 0 3px 18px; position: relative; }
+  .cap ul li::before { content: "▸"; position: absolute; left: 0; color: var(--cyan); }
+
+  /* ===== 连接器 ===== */
+  .conn-group { margin-bottom: 26px; }
+  .conn-group .gt {
+    font-size: 13px; font-weight: 700; color: var(--cyan); letter-spacing: 2px;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .conn-group .gt::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(34,211,238,.35), transparent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    background: rgba(255,255,255,.03); border: 1px solid var(--card-brd);
+    padding: 8px 18px; border-radius: 999px; font-size: 13.5px; color: var(--txt-2);
+    transition: border-color .2s, color .2s;
+  }
+  .chip:hover { border-color: var(--cyan); color: var(--cyan); }
+  .chip.b { border-color: rgba(251,191,36,.45); color: var(--gold); font-weight: 600; background: rgba(251,191,36,.06); }
+
+  /* ===== 定价 ===== */
+  .price-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(252px, 1fr)); gap: 18px; align-items: stretch; }
+  .plan {
+    background: var(--card); border: 1px solid var(--card-brd); border-radius: 16px;
+    padding: 34px 26px; display: flex; flex-direction: column; position: relative;
+    transition: transform .25s, box-shadow .25s;
+  }
+  .plan:hover { transform: translateY(-4px); }
+  .plan.hot {
+    border: 1px solid transparent;
+    background:
+      linear-gradient(var(--bg2), var(--bg2)) padding-box,
+      var(--grad) border-box;
+    box-shadow: 0 16px 48px rgba(59,130,246,.22);
+  }
+  .plan .flag {
+    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    background: var(--grad); color: #fff; font-size: 12px; font-weight: 700;
+    padding: 5px 18px; border-radius: 999px; letter-spacing: 1px; white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(59,130,246,.5);
+  }
+  .plan h3 { font-size: 20px; color: #fff; }
+  .plan .who { font-size: 12.5px; color: var(--txt-3); margin: 6px 0 20px; }
+  .plan .price {
+    font-size: 36px; font-weight: 900; font-variant-numeric: tabular-nums;
+    background: linear-gradient(180deg, #fff, #a9bce0);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .plan.hot .price { background: var(--grad); -webkit-background-clip: text; background-clip: text; }
+  .plan .price small { font-size: 14px; font-weight: 500; }
+  .plan .unit { font-size: 12.5px; color: var(--txt-3); margin: 4px 0 22px; padding-bottom: 20px; border-bottom: 1px dashed rgba(120,160,255,.18); }
+  .plan ul { list-style: none; margin: 0 0 26px; flex: 1; }
+  .plan ul li { font-size: 13.5px; padding: 6px 0 6px 24px; position: relative; color: var(--txt-2); }
+  .plan ul li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+  .plan ul li.no { color: var(--txt-3); opacity: .55; }
+  .plan ul li.no::before { content: "—"; color: var(--txt-3); }
+  .plan ul li strong { color: #fff; }
+  .plan .buy {
+    text-align: center; padding: 13px; border-radius: 8px; font-weight: 700; font-size: 14px;
+    text-decoration: none; color: var(--txt); border: 1px solid rgba(160,190,255,.3);
+    background: rgba(255,255,255,.03); letter-spacing: 1px; transition: all .2s;
+  }
+  .plan .buy:hover { border-color: var(--cyan); color: var(--cyan); }
+  .plan.hot .buy { background: var(--grad); color: #fff; border: none; box-shadow: 0 6px 24px rgba(59,130,246,.4); }
+  .plan.hot .buy:hover { color: #fff; transform: translateY(-1px); }
+
+  /* ===== 对比表 ===== */
+  .cmp-wrap { overflow-x: auto; margin-top: 8px; border: 1px solid var(--card-brd); border-radius: var(--radius); }
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 780px; }
+  table.cmp th, table.cmp td { padding: 13px 16px; border-bottom: 1px solid rgba(120,160,255,.1); text-align: center; }
+  table.cmp th {
+    background: rgba(59,130,246,.1); color: #fff; font-weight: 700; font-size: 14px;
+    border-bottom: 1px solid rgba(120,160,255,.25);
+  }
+  table.cmp td:first-child, table.cmp th:first-child { text-align: left; color: var(--txt-2); }
+  table.cmp th:first-child { color: #fff; }
+  table.cmp td.g { color: var(--green); font-weight: 700; }
+  table.cmp td.x { color: var(--txt-3); opacity: .5; }
+  table.cmp td { color: var(--txt-2); }
+  table.cmp tr.group td {
+    background: rgba(34,211,238,.06); color: var(--cyan);
+    font-weight: 700; text-align: left; font-size: 12.5px; letter-spacing: 2px;
+  }
+  table.cmp tr:hover td { background: rgba(59,130,246,.05); }
+  table.cmp tr.group:hover td { background: rgba(34,211,238,.06); }
+
+  /* 部署注记 */
+  .deploy-note {
+    margin-top: 20px; padding: 16px 22px; border-radius: var(--radius);
+    background: rgba(251,191,36,.06); border: 1px solid rgba(251,191,36,.28);
+    font-size: 13px; color: var(--txt-2); line-height: 1.8;
+  }
+  .deploy-note strong { color: var(--gold); letter-spacing: 1px; }
+  .deploy-note code {
+    background: rgba(255,255,255,.07); border: 1px solid rgba(120,160,255,.2);
+    padding: 1px 7px; border-radius: 5px; font-size: 12px; color: var(--cyan);
+    font-family: "Cascadia Code", Consolas, monospace;
+  }
+
+  /* ===== 增值服务 ===== */
+  .svc-grid { grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); }
+  .svc-item h4 { font-size: 16px; margin-bottom: 8px; color: #fff; }
+  .svc-item .p { font-size: 14px; color: var(--gold); font-weight: 700; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+  .svc-item p.d { font-size: 13px; color: var(--txt-3); }
+
+  /* ===== 部署 ===== */
+  .deploy-grid { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+  .deploy h4 { margin-bottom: 14px; font-size: 17px; color: #fff; }
+  .deploy ul { list-style: none; }
+  .deploy ul li { font-size: 13.5px; color: var(--txt-2); padding: 5px 0 5px 20px; position: relative; }
+  .deploy ul li::before { content: "◆"; position: absolute; left: 0; font-size: 9px; color: var(--cyan); top: 11px; }
+
+  /* ===== 流程 ===== */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 18px; counter-reset: step; }
+  .flow .step {
+    padding: 26px 22px; background: var(--card); border: 1px solid var(--card-brd);
+    border-radius: var(--radius); position: relative;
+  }
+  .flow .step::before {
+    counter-increment: step; content: "0" counter(step);
+    font-size: 28px; font-weight: 900; display: block; margin-bottom: 12px;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    font-variant-numeric: tabular-nums;
+  }
+  .flow .step h4 { font-size: 15px; margin-bottom: 8px; color: #fff; }
+  .flow .step p { font-size: 12.5px; color: var(--txt-3); }
+
+  /* ===== FAQ ===== */
+  details.faq {
+    background: var(--card); border: 1px solid var(--card-brd);
+    border-radius: var(--radius); padding: 20px 26px; margin-bottom: 12px;
+    transition: border-color .2s;
+  }
+  details.faq[open] { border-color: rgba(34,211,238,.4); }
+  details.faq summary { cursor: pointer; font-weight: 600; font-size: 15px; color: var(--txt); list-style: none; position: relative; padding-right: 30px; }
+  details.faq summary::after { content: "+"; position: absolute; right: 0; top: -2px; font-size: 20px; color: var(--cyan); transition: transform .2s; }
+  details.faq[open] summary::after { transform: rotate(45deg); }
+  details.faq p { margin-top: 12px; font-size: 13.5px; color: var(--txt-2); }
+
+  /* ===== CTA ===== */
+  .cta-final {
+    text-align: center;
+    background:
+      radial-gradient(ellipse 60% 80% at 50% 110%, rgba(59,130,246,.3), transparent 65%),
+      var(--bg1);
+    border-top: 1px solid rgba(120,160,255,.12);
+  }
+  .cta-final p { color: var(--txt-2); max-width: 600px; margin: 0 auto 36px; font-size: 16px; }
+
+  footer {
+    padding: 40px 0; text-align: center; color: var(--txt-3); font-size: 12.5px;
+    border-top: 1px solid rgba(120,160,255,.1); letter-spacing: .5px;
+  }
+
+  @media (max-width: 768px) {
+    .hero h1 { font-size: 36px; }
+    h2 { font-size: 26px; }
+    .nav-links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== 顶栏 ==================== -->
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#"><em>Integration</em> Platform · 集成中台</a>
+    <div class="nav-links">
+      <a href="#capability">产品能力</a>
+      <a href="#connector">连接器</a>
+      <a href="#pricing">版本定价</a>
+      <a href="#service">增值服务</a>
+      <a href="#contact" class="nav-cta">申请试用</a>
+    </div>
+  </div>
+</nav>
+
+<main itemscope itemtype="https://schema.org/Product">
+  <meta itemprop="name" content="集成中台 Integration Platform">
+  <meta itemprop="alternateName" content="iPaaS 企业集成平台">
+  <meta itemprop="description" content="企业级一体化集成平台：统一身份认证、数据集成、任务调度、单点登录与开放 API。">
+
+<!-- ==================== Hero ==================== -->
+<header class="hero" itemprop="abstract">
+  <div class="wrap">
+    <span class="badge">ENTERPRISE INTEGRATION PLATFORM</span>
+    <h1 itemprop="headline">系统之间怎么连<br>从此只做一次</h1>
+    <p itemprop="description">统一身份认证 · 数据集成 · 任务调度 · 单点登录 · 开放 API 的一体化企业级平台。让 ERP、CRM、OA、钉钉、企微与数据库之间的数据和账号自动流动，替代每个项目重复建设的对接工程。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#pricing">查看版本与价格</a>
+      <a class="btn btn-ghost" href="#contact">申请 POC 试用</a>
+    </div>
+    <div class="hero-stats">
+      <div><div class="num">26+</div><div class="lbl">预置连接器</div></div>
+      <div><div class="num">5 种</div><div class="lbl">SSO 登录模式</div></div>
+      <div><div class="num">3 套</div><div class="lbl">环境隔离 dev / staging / prod</div></div>
+      <div><div class="num">100%</div><div class="lbl">操作可审计</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- ==================== 痛点 ==================== -->
+<section>
+  <div class="wrap">
+    <span class="tag">Why Integration Platform</span>
+    <h2>这些成本，你正在持续支付</h2>
+    <p class="sub">系统越多，靠"人肉"和"一次性项目"维持的连接越脆弱</p>
+    <div class="grid pain-grid">
+      <div class="card pain"><div class="idx">01</div><div class="t">同一份数据录好几遍</div><div class="d">销售录一遍、客服录一遍、财务月底对不上再核一遍。数据不是缺，是散在各处互不相认。</div></div>
+      <div class="card pain"><div class="idx">02</div><div class="t">入离职账号手工开关</div><div class="d">入职开五六个系统，离职漏关一个就是安全隐患，审计时说不清。</div></div>
+      <div class="card pain"><div class="idx">03</div><div class="t">打通比软件本身还贵</div><div class="d">软件报价三十万，对接报价四十万——每个新项目都在重复写"从 A 到 B"的同步代码。</div></div>
+      <div class="card pain"><div class="idx">04</div><div class="t">集团口径对不齐</div><div class="d">总部要一份全集团数据，先花两周人工汇总 Excel，口径还各自解释。</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 核心能力 ==================== -->
+<section id="capability">
+  <div class="wrap">
+    <span class="tag">Core Capabilities</span>
+    <h2>六大能力域，一套平台</h2>
+    <p class="sub">以下能力均为现网已交付功能，非规划路线图</p>
+    <div class="grid cap-grid">
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div>
+        <h3>数据集成与任务调度</h3>
+        <p>可视化配置"从哪取、放哪去、字段怎么对应"，之后自动运行。</p>
+        <ul>
+          <li>字段映射：直接 / 类型转换 / 默认值 / 自定义表达式</li>
+          <li>全量打底 + 增量水位线同步</li>
+          <li>调度：手动 / Cron / 事件 / Webhook</li>
+          <li>冲突策略：源优先 / 目标优先 / 时间优先 / 死信人工裁决</li>
+          <li>DAG 多步编排画布，步骤级状态监控</li>
+          <li>失败重试、回执回调、失败告警</li>
+        </ul>
+      </div>
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.6" fill="currentColor" stroke="none"/><path d="M12 16.6V18"/></svg></div>
+        <h3>统一身份与单点登录</h3>
+        <p>一套账号走遍所有系统，第三方系统免登直达。</p>
+        <ul>
+          <li>五种模式：JWT / Ticket / OAuth2+PKCE / SAML 2.0 / 表单代填</li>
+          <li>A → 中台 → B 换票免登（SSO Launch）</li>
+          <li>SAML 强制 IdP 证书 + XML-DSig 签名校验</li>
+          <li>RS256 非对称签名 + JWKS 公钥分发</li>
+          <li>会话列表 / 强制踢下线（jti 黑名单即时生效）</li>
+          <li>OIDC Discovery，兼容 next-auth 等标准库</li>
+        </ul>
+      </div>
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16.5 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.3c2.4.8 4 2.7 4 5.7"/></svg></div>
+        <h3>组织与用户同步</h3>
+        <p>从钉钉 / 企微 / AD / LDAP 拉通讯录，部门与人事数据自动更新。</p>
+        <ul>
+          <li>5 个预置同步模板，开箱即用</li>
+          <li>部门树 + 人员-部门归属自动维护</li>
+          <li>字段级脱敏（多种规则 + 智能识别）</li>
+          <li>组织架构树按任务维度查看</li>
+        </ul>
+      </div>
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.7 3.8 9S14.5 18.4 12 21c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3Z"/></svg></div>
+        <h3>开放服务与 API 生态</h3>
+        <p>把集成能力以标准 API 开放给集成商与上下游伙伴。</p>
+        <ul>
+          <li>自助注册发 Key / 控制台签发</li>
+          <li>OpenAPI 规范文档 + 在线调试</li>
+          <li>Python / TypeScript 双 SDK，控制台一键构建下载</li>
+          <li>入站 Webhook、数据回执、幂等键防重</li>
+          <li>按集成商隔离资产与用量，配额超限自动拦截</li>
+        </ul>
+      </div>
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M6 20v-6"/><path d="M11 20V9"/><path d="M16 20v-9"/><path d="M21 20V5"/><circle cx="21" cy="4" r="1.4" fill="currentColor" stroke="none"/></svg></div>
+        <h3>执行监控与审计</h3>
+        <p>每次执行全程留痕，出问题能查、能回滚。</p>
+        <ul>
+          <li>执行记录：每步起止、行数、失败原因</li>
+          <li>死信队列：重处理 / 忽略 / 改字段再落库</li>
+          <li>版本快照回滚 + 字段级变更审计</li>
+          <li>仪表盘趋势 + Prometheus 指标</li>
+        </ul>
+      </div>
+      <div class="card cap">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3.5 7.5 12 12l8.5-4.5L12 3Z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 17 8.5 4.5L20.5 17"/></svg></div>
+        <h3>多租户与治理</h3>
+        <p>面向集团化与服务商运营模式设计。</p>
+        <ul>
+          <li>dev / staging / prod 三套环境隔离</li>
+          <li>Workspace 工作空间 + 集成商数据隔离</li>
+          <li>RBAC 角色权限，粒度到操作</li>
+          <li>敏感配置 AES-256-CBC 加密、bcrypt 密码、登录限流</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 连接器 ==================== -->
+<section id="connector">
+  <div class="wrap">
+    <span class="tag">Connectors</span>
+    <h2>26+ 种连接器，免开发对接</h2>
+    <p class="sub">登记、测连、真实抽取 / 写入均已内置——绝大多数场景不需要为"对接"单独开发</p>
+    <div class="conn-group">
+      <div class="gt">数据库 DATABASE</div>
+      <div class="chips">
+        <span class="chip">MySQL</span><span class="chip">PostgreSQL</span><span class="chip">Oracle</span><span class="chip">SQL Server</span>
+        <span class="chip">达梦</span><span class="chip">人大金仓</span><span class="chip">MongoDB</span><span class="chip">Elasticsearch</span><span class="chip">Redis</span>
+      </div>
+    </div>
+    <div class="conn-group">
+      <div class="gt">信创与国产生态 XINCHUANG</div>
+      <div class="chips">
+        <span class="chip b">达梦 DM</span><span class="chip b">人大金仓 Kingbase</span><span class="chip b">用友 U8 / NC</span><span class="chip b">钉钉</span><span class="chip b">企业微信</span><span class="chip b">飞书</span>
+      </div>
+    </div>
+    <div class="conn-group">
+      <div class="gt">消息与队列 MESSAGING</div>
+      <div class="chips">
+        <span class="chip">Kafka</span><span class="chip">RabbitMQ</span><span class="chip">RocketMQ</span><span class="chip">Webhook</span><span class="chip">HTTP API</span>
+      </div>
+    </div>
+    <div class="conn-group">
+      <div class="gt">文件与存储 STORAGE</div>
+      <div class="chips">
+        <span class="chip">SFTP / FTP</span><span class="chip">S3 对象存储</span><span class="chip">CSV / Excel</span>
+      </div>
+    </div>
+    <div class="conn-group">
+      <div class="gt">身份与 SAAS</div>
+      <div class="chips">
+        <span class="chip">LDAP</span><span class="chip">Active Directory</span><span class="chip">SCIM</span><span class="chip">纷享销客</span>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:28px;margin-bottom:0;">未覆盖的系统可通过定制连接器服务接入（见增值服务）。</p>
+  </div>
+</section>
+
+<!-- ==================== 定价 ==================== -->
+<section id="pricing">
+  <div class="wrap">
+    <span class="tag">Pricing</span>
+    <h2>版本与定价</h2>
+    <p class="sub">按组织规模与集成复杂度选择 · 支持年订阅与私有化买断 · 以下为参考价，以正式报价为准</p>
+
+    <div class="price-grid">
+      <div class="plan" itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+        <h3 itemprop="name">试用版</h3>
+        <div class="who">验证可行性，跑通第一条链路</div>
+        <div class="price"><span itemprop="price" content="0">¥0</span><meta itemprop="priceCurrency" content="CNY"></div>
+        <div class="unit">30 天 · 测试环境</div>
+        <ul>
+          <li>全部 26+ 连接器可用</li>
+          <li>3 个集成任务</li>
+          <li>单环境（dev）</li>
+          <li>手动调度</li>
+          <li>SSO：JWT / Ticket 模式</li>
+          <li>月度 10 万行数据量</li>
+          <li class="no">生产环境 / Celery 集群</li>
+          <li class="no">SAML / OAuth2 授权服务器</li>
+          <li class="no">快照回滚 / 字段审计</li>
+        </ul>
+        <a class="buy" href="#contact" itemprop="url">申请试用</a>
+      </div>
+
+      <div class="plan" itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+        <h3 itemprop="name">标准版</h3>
+        <div class="who">中小企业 · 单组织数据打通</div>
+        <div class="price"><span itemprop="price" content="98000">¥98,000</span><small> /年</small><meta itemprop="priceCurrency" content="CNY"></div>
+        <div class="unit">年订阅 · 含部署与首年维保</div>
+        <ul>
+          <li>全部 26+ 连接器</li>
+          <li>30 个集成任务</li>
+          <li>dev / staging / prod 三环境</li>
+          <li>Cron / 事件 / Webhook 调度</li>
+          <li>SSO 全模式（含 OAuth2 / SAML）</li>
+          <li>组织同步 5 模板 + 脱敏</li>
+          <li>执行监控 + 死信处理</li>
+          <li>月度 500 万行数据量</li>
+          <li class="no">DAG 多步编排</li>
+          <li class="no">集成商运营（发 Key / 代配 / 计费）</li>
+        </ul>
+        <a class="buy" href="#contact" itemprop="url">购买标准版</a>
+      </div>
+
+      <div class="plan hot" itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+        <span class="flag">最受欢迎</span>
+        <h3 itemprop="name">专业版</h3>
+        <div class="who">集团企业 · 多系统深度集成</div>
+        <div class="price"><span itemprop="price" content="298000">¥298,000</span><small> /年</small><meta itemprop="priceCurrency" content="CNY"></div>
+        <div class="unit">年订阅 · 含实施与专属支持</div>
+        <ul>
+          <li><strong>标准版全部能力</strong></li>
+          <li>集成任务不限量</li>
+          <li>DAG 画布多步编排</li>
+          <li>版本快照回滚 + 字段级审计</li>
+          <li>双向同步防回环</li>
+          <li>开放 API + Python / TS 双 SDK</li>
+          <li>集成商运营模式：自助发 Key / 代配资产 / 用量计费</li>
+          <li>配额管理（任务数 / 席位数 / 数据量 / API 调用量）</li>
+          <li>Celery 生产级队列集群</li>
+          <li>数据量不限 · 仅按节点扩容</li>
+        </ul>
+        <a class="buy" href="#contact" itemprop="url">购买专业版</a>
+      </div>
+
+      <div class="plan" itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+        <h3 itemprop="name">旗舰版 · 私有化</h3>
+        <div class="who">央国企 / 集团总部 · 信创与合规要求</div>
+        <div class="price"><span itemprop="price" content="600000">¥600,000</span><small> 起</small><meta itemprop="priceCurrency" content="CNY"></div>
+        <div class="unit">一次性买断 + 年维保 20%</div>
+        <ul>
+          <li><strong>专业版全部能力</strong></li>
+          <li>源码级交付选项</li>
+          <li>信创适配（达梦 / 金仓 / 麒麟 OS）</li>
+          <li>专属部署架构设计（高可用）</li>
+          <li>定制连接器 2 个 / 年</li>
+          <li>专属客户成功经理</li>
+          <li>SLA 99.9% · 4 小时响应</li>
+          <li>现场培训与年度巡检</li>
+        </ul>
+        <a class="buy" href="#contact" itemprop="url">咨询商务</a>
+      </div>
+    </div>
+
+    <h2 style="margin-top:88px;">版本功能明细对比</h2>
+    <p class="sub">所有能力项均可在控制台实际演示验证</p>
+    <div class="cmp-wrap">
+      <table class="cmp">
+        <thead>
+          <tr><th>能力项</th><th>试用版</th><th>标准版</th><th>专业版</th><th>旗舰私有化</th></tr>
+        </thead>
+        <tbody>
+          <tr class="group"><td colspan="5">集成与调度</td></tr>
+          <tr><td>连接器（26+ 种）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>集成任务数量</td><td>3 个</td><td>30 个</td><td>不限</td><td>不限</td></tr>
+          <tr><td>调度方式</td><td>手动</td><td>Cron / 事件 / Webhook</td><td>全部</td><td>全部</td></tr>
+          <tr><td>增量同步（水位线）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>DAG 多步编排画布</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>双向同步防回环</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr class="group"><td colspan="5">单点登录（SSO）</td></tr>
+          <tr><td>JWT / Ticket 免登</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>OAuth2 + PKCE 授权服务器</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>SAML 2.0（XML-DSig 校验）</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>OIDC Discovery / JWKS</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>会话管理 / 强制下线</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr class="group"><td colspan="5">数据治理与安全</td></tr>
+          <tr><td>字段级脱敏</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>死信人工裁决</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>版本快照回滚</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>字段级变更审计</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>敏感配置 AES-256 加密</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr class="group"><td colspan="5">开放与生态</td></tr>
+          <tr><td>开放 API + API Key</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>Python / TypeScript SDK</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>集成商运营模式（发 Key / 代配 / 计费）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>配额管理与用量统计</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr class="group"><td colspan="5">部署与服务</td></tr>
+          <tr><td>环境隔离（dev/staging/prod）</td><td class="x">dev 单环境</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>Celery 生产队列集群</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>信创适配（达梦 / 金仓 / 麒麟）</td><td class="x">—</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td></tr>
+          <tr><td>SLA 与响应时效</td><td class="x">—</td><td>工作日 8h</td><td>7×24 · 8h 响应</td><td>99.9% · 4h 响应</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="deploy-note">
+      <strong>交付注记</strong>：任务数、数据量等配额由平台实时拦截（超限自动拒绝并告警）；开放 API 自助注册、DAG 编排等能力差异通过部署配置与商务授权共同生效——标准版私有化交付时默认关闭开放 API 自助注册（<code>OPEN_REGISTER_ENABLED=false</code>），升级专业版后即刻开启，无需重新部署或迁移配置。
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 增值服务 ==================== -->
+<section id="service">
+  <div class="wrap">
+    <span class="tag">Value-added Services</span>
+    <h2>增值服务 · 按需选购</h2>
+    <p class="sub">版本之外的能力扩展，独立报价</p>
+    <div class="grid svc-grid">
+      <div class="card svc-item">
+        <h4>定制连接器开发</h4>
+        <div class="p">¥30,000 - ¥80,000 / 个</div>
+        <p class="d">覆盖自研系统、行业专用软件等 26 种标准连接器之外的对接对象。含测试与一年缺陷修复。</p>
+      </div>
+      <div class="card svc-item">
+        <h4>实施交付服务</h4>
+        <div class="p">¥2,000 / 人天</div>
+        <p class="d">字段映射梳理、历史数据迁移、联调测试。标准版含 5 人天，专业版含 15 人天，超出部分按此计费。</p>
+      </div>
+      <div class="card svc-item">
+        <h4>扩容数据包</h4>
+        <div class="p">¥10,000 / 1000 万行</div>
+        <p class="d">标准版月度数据量超限后可购买扩容包，当月生效。专业版及以上不限量。</p>
+      </div>
+      <div class="card svc-item">
+        <h4>管理员培训</h4>
+        <div class="p">¥8,000 / 场</div>
+        <p class="d">半天现场或远程培训：任务配置、SSO 接入、死信处理、监控告警解读。含操作手册与录屏。</p>
+      </div>
+      <div class="card svc-item">
+        <h4>年度健康巡检</h4>
+        <div class="p">旗舰版含 · 其余 ¥20,000 / 年</div>
+        <p class="d">每季度一次：任务失败率分析、慢任务优化建议、证书与密钥轮换检查、容量规划建议。</p>
+      </div>
+      <div class="card svc-item">
+        <h4>白标与界面嵌入</h4>
+        <div class="p">另行评估</div>
+        <p class="d">面向需要将集成能力嵌入自有产品的服务商客户，按嵌入范围单独评估报价（路线图能力）。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 部署与安全 ==================== -->
+<section>
+  <div class="wrap">
+    <span class="tag">Deployment & Security</span>
+    <h2>两种交付形态</h2>
+    <p class="sub">同一套产品，按数据主权要求选择</p>
+    <div class="grid deploy-grid">
+      <div class="card deploy">
+        <h4>☁️ 云托管（SaaS 模式）</h4>
+        <ul>
+          <li>由我方运维，开通即用</li>
+          <li>配额硬性拦截：超限自动拒绝并告警，不产生意外账单</li>
+          <li>按订阅版本计费，含升级</li>
+          <li>适合无专职运维团队的企业</li>
+        </ul>
+      </div>
+      <div class="card deploy">
+        <h4>🏛️ 私有化部署（Private 模式）</h4>
+        <ul>
+          <li>部署在客户机房 / 专有云，数据不出域</li>
+          <li>配额放行 + 告警模式，业务不中断</li>
+          <li>PostgreSQL + Celery / Redis 生产架构</li>
+          <li>支持国产数据库与操作系统（信创）</li>
+          <li>传输 HTTPS、敏感字段 AES-256-CBC、SAML 强制签名校验</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 购买流程 ==================== -->
+<section>
+  <div class="wrap">
+    <span class="tag">How to Buy</span>
+    <h2>五步完成采购与上线</h2>
+    <p class="sub">先验证、再采购、后扩面，每一步都可退出</p>
+    <div class="flow">
+      <div class="step"><h4>需求沟通</h4><p>半小时梳理待打通系统清单，确认哪些开箱即连、哪些需要准备。</p></div>
+      <div class="step"><h4>POC 试用</h4><p>30 天试用版 + 脱敏数据，跑通一条最关键链路，验收可行性。</p></div>
+      <div class="step"><h4>商务签约</h4><p>按验证范围选定版本与增值服务，年订阅或私有化买断。</p></div>
+      <div class="step"><h4>部署实施</h4><p>环境部署、字段映射配置、历史数据迁移，通常 1-2 周上线。</p></div>
+      <div class="step"><h4>运营扩面</h4><p>第一条链路稳定后，按同样方式复制到其余系统，逐季度扩面。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== FAQ ==================== -->
+<section>
+  <div class="wrap">
+    <span class="tag">FAQ</span>
+    <h2>采购前你可能想问</h2>
+    <p class="sub"></p>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">会影响我们现有系统吗？需要在原系统装东西吗？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">不需要。所有连接器通过数据库账号、API 或文件协议对接，原系统无需安装任何组件。只读场景只读取，写入场景按你授予的权限范围操作。</p></div>
+    </details>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">订阅到期后数据和任务会怎样？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">到期前 30 天开始提醒。到期后任务暂停调度但配置与历史数据保留 90 天，续费即恢复；私有化买断无此限制。支持到期前全量导出配置与数据。</p></div>
+    </details>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">月度数据量怎么计算？超了怎么办？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">按成功写入目标端的行数计。SaaS 模式下超限自动拦截并告警（不会静默产生费用），可购买扩容包当月生效；私有化模式只告警不拦截。</p></div>
+    </details>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">我们有一套自研系统不在连接器清单里，能接吗？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">可以。自研系统只要能提供数据库账号、HTTP API 或文件导出，就能用现有通用连接器接入；只有界面没有接口的系统，可采购定制连接器开发服务。</p></div>
+    </details>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">从标准版升级到专业版，已配置的任务要重做吗？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">不用。版本升级仅解锁能力，所有数据源、任务、映射配置原样保留，平滑升级。</p></div>
+    </details>
+    <details class="faq" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+      <summary itemprop="name">支持信创环境吗？</summary>
+      <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer"><p itemprop="text">旗舰私有化版支持达梦、人大金仓数据库与麒麟操作系统，连接器本身即含国产数据库类型。其他版本可按需评估适配。</p></div>
+    </details>
+  </div>
+</section>
+
+<!-- ==================== CTA ==================== -->
+<section class="cta-final" id="contact">
+  <div class="wrap">
+    <h2>先跑通一条链路，再谈采购</h2>
+    <p>建议从"人事变动后账号自动停用"或"两个系统之间一条数据同步"这样的小切口开始，30 天试用版即可验证。</p>
+    <div class="cta" style="justify-content:center; display:flex; gap:16px; flex-wrap:wrap;">
+      <a class="btn btn-primary" href="/login">登录控制台体验</a>
+      <a class="btn btn-ghost" href="mailto:sales@example.com?subject=集成中台采购咨询" itemprop="email">联系商务：sales@example.com</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    集成中台 Integration Platform · 产品介绍与商业方案 · 价格均为参考价，以正式商务报价为准
+  </div>
+</footer>
+
+</body>
+</html>

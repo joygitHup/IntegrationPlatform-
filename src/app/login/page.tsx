@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { validateLoginForm } from '@/lib/login-form';
 import { safeRedirectPath } from '@/lib/permissions';
+import { apiClient } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,9 +24,18 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      const from = typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('from')
-        : null;
+      const searchParams = new URLSearchParams(window.location.search);
+      const from = searchParams.get('from');
+      const isOauth = searchParams.get('oauth') === '1';
+      // OAuth 授权码流程：已登录用户直接带 token 跳回后端 /oauth/authorize
+      if (isOauth && from) {
+        const token = apiClient.getToken();
+        if (token) {
+          const sep = from.includes('?') ? '&' : '?';
+          window.location.href = `${from}${sep}token=${encodeURIComponent(token)}`;
+          return;
+        }
+      }
       router.replace(safeRedirectPath(from));
     }
   }, [authLoading, user, router]);

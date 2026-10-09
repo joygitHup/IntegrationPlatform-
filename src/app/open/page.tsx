@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/app-layout';
-import { openApi } from '@/lib/api-client';
+import { appsApi, openApi } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Plug,
   Plus,
@@ -24,6 +31,10 @@ import {
   CheckCircle2,
   KeyRound,
   Pencil,
+  Download,
+  Package,
+  Hammer,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -44,6 +55,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 
 const TYPE_ICONS: Record<string, typeof Plug> = {
   application: Grid3X3,
@@ -116,8 +133,9 @@ curl -s -X POST ${base}/open/sso/launch \\
 }
 
 export default function OpenServicesPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canManage = hasPermission('open:manage');
+  const isPlatform = !user?.clientId;
 
   const [catalog, setCatalog] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
@@ -149,6 +167,11 @@ export default function OpenServicesPage() {
   const [statusInfo, setStatusInfo] = useState<any>(null);
   const [errors, setErrors] = useState<any[]>([]);
   const [changelog, setChangelog] = useState<any[]>([]);
+  const [sdkData, setSdkData] = useState<any>(null);
+  const [building, setBuilding] = useState(false);
+  const [apps, setApps] = useState<any[]>([]);
+  const [selectedAppId, setSelectedAppId] = useState<string>('');
+  const [selectedApp, setSelectedApp] = useState<any>(null);
 
   const [revealedKey, setRevealedKey] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -157,22 +180,185 @@ export default function OpenServicesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [cat, list, status, err, log] = await Promise.all([
+      const [cat, list, status, err, log, sdk, appsResp] = await Promise.all([
         openApi.catalog(),
-        canManage ? openApi.clients.list() : Promise.resolve({ items: [] }),
+        isPlatform && canManage ? openApi.clients.list() : Promise.resolve({ items: [] }),
         openApi.status().catch(() => null),
         openApi.errors().catch(() => ({ items: [] })),
         openApi.changelog().catch(() => ({ items: [] })),
+        openApi.sdk().catch(() => null),
+        appsApi.list({ pageSize: 100 }).catch(() => ({ items: [] })),
       ]);
       setCatalog(cat);
       setClients(list.items || []);
       setStatusInfo(status);
       setErrors(err.items || []);
       setChangelog(log.items || []);
+      setSdkData(sdk);
+      const appsList = appsResp.items || [];
+      setApps(appsList);
+      if (appsList.length > 0 && !selectedAppId) {
+        setSelectedAppId(appsList[0].id);
+        setSelectedApp(appsList[0]);
+      }
     } catch (error) {
       toast.error((error as Error).message || '加载失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSelectApp = async (id: string) => {
+    setSelectedAppId(id);
+    try {
+      const detail = await appsApi.get(id);
+      setSelectedApp(detail);
+    } catch (error) {
+      const fallback = apps.find((a) => a.id === id);
+      setSelectedApp(fallback || null);
+      toast.error((error as Error).message || '应用详情加载失败');
+    }
+  };
+
+  const buildIntegrationGuide = () => {
+    if (!selectedApp) return '';
+    const platformUrl = (process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '');
+    const useRsa = selectedApp.settings?.useRsa === true || selectedApp.settings?.useRsa === 'true';
+    const wheel = sdkData?.latest?.filename || 'integration_hub-1.5.0-py3-none-any.whl';
+    const guide = `# ${selectedApp.name} SSO 对接清单
+
+## 一、中台侧信息（已配置好）
+
+| 项 | 值 |
+|---|---|
+| 中台地址 | ${platformUrl} |
+| AppID | ${selectedApp.id} |
+| Audience (应用 code) | ${selectedApp.code} |
+| 验签模式 | ${useRsa ? 'RS256（推荐，本地验签）' : 'HS256（需调中台 validate）'} |
+| JWKS 公钥 | ${platformUrl}/api/sso/.well-known/jwks.json |
+| SDK wheel | ${wheel}（从中台"开放服务 → SDK 构建与下载"获取） |
+
+## 二、对方需要做的 3 件事
+
+### 1. 安装 SDK
+
+\`\`\`bash
+pip install ${wheel}
+\`\`\`
+
+### 2. SDK 配置（Django settings.py 启动时执行一次）
+
+\`\`\`python
+from integration_hub.sso import configure
+configure(
+    platform_url="${platformUrl}",
+    audience="${selectedApp.code}",
+    app_id="${selectedApp.id}",
+    auto_create_user=True,
+    default_redirect="/dashboard",
+    # 敏感系统开启：本地验签后再回调中台确认未被踢下线（默认 False）
+    check_revocation=False,
+)
+\`\`\`
+
+### 3. 挂载落地路由（两种方式二选一，推荐 A）
+
+**方式 A：函数视图（推荐，不改动 MIDDLEWARE）**
+
+\`\`\`python
+# urls.py
+from integration_hub.sso.middleware import django_sso_callback_view
+urlpatterns += [path("sso/callback", django_sso_callback_view, name="sso-callback")]
+\`\`\`
+
+**方式 B：全局中间件（所有请求都会经过 /sso/callback 判断）**
+
+\`\`\`python
+# settings.py（不要再重复挂 urls）
+MIDDLEWARE += ["integration_hub.sso.middleware.django_sso_callback"]
+\`\`\`
+
+> FastAPI 用 \`fastapi_callback()\`，但必须先挂 \`SessionMiddleware\`；Flask 用 \`flask_callback(app)\`。
+
+## 三、对方要处理的 URL 形态
+
+\`\`\`
+${selectedApp.loginUrl || `http://对方域名/sso/callback`}?token=eyJhbGciOiJSUzI1NiJ9...
+\`\`\`
+
+SDK 中间件自动取 token → 拉中台 JWKS 公钥 → 本地 RS256 验签 → 建本地用户 → 写 session → 跳 ${useRsa ? '/dashboard' : '/dashboard（或自定义）'}。
+
+## 四、本地用户映射（可选）
+
+默认 SDK 用 SSO user.sub 做唯一键。如要按 username 映射或自动建号，重写 \`_map_or_create_user\`：
+
+\`\`\`python
+from integration_hub.sso import middleware
+
+def _map_or_create_user(user_info):
+    # user_info 字段：sub, username, email, displayName, iss, aud
+    from myapp.models import User
+    user, _ = User.objects.get_or_create(
+        sso_sub=user_info['sub'],
+        defaults={'username': user_info['username'], 'email': user_info.get('email', '')},
+    )
+    return user
+
+middleware._map_or_create_user = _map_or_create_user
+\`\`\`
+
+## 五、验证流程
+
+1. 你装好 SDK + 挂好路由后通知中台
+2. 中台在控制台 → 应用门户 → 点"${selectedApp.name}"的"打开"按钮
+3. 浏览器新窗口应直接进入你的 /dashboard，不再跳 /login
+
+## 六、问题排查
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| 浏览器打开 URL 是 /login 而非 /sso/callback | 中台 loginUrl 配错 | 中台改 loginUrl 为对方落地路由 |
+| 对方报 JWKS unreachable | 中台未启动 / JWKS 端点 404 | curl ${platformUrl}/api/sso/.well-known/jwks.json 自检 |
+| 对方报 aud mismatch | SDK audience 与应用 code 不一致 | 改 SDK configure(audience="${selectedApp.code}") |
+| 对方报 token expired | token > 5 分钟才到对方 | 检查 jwtExpiresIn 与落地路由响应速度 |
+| 对方建号失败 | _map_or_create_user 抛异常 | 检查本地 User 表是否有 sso_sub 字段 |
+`;
+    return guide;
+  };
+
+  const copyGuide = () => {
+    const guide = buildIntegrationGuide();
+    if (!guide) return;
+    navigator.clipboard.writeText(guide).then(
+      () => toast.success('对接清单已复制'),
+      () => toast.error('复制失败'),
+    );
+  };
+
+  const downloadGuide = () => {
+    const guide = buildIntegrationGuide();
+    if (!guide) return;
+    const blob = new Blob([guide], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedApp?.code || 'app'}-sso-对接清单.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBuildSdk = async () => {
+    setBuilding(true);
+    try {
+      const data = await openApi.buildSdk();
+      setSdkData({ ...sdkData, builds: data.builds, latest: data.latest });
+      toast.success(`构建成功：${data.latest?.filename || ''}`);
+    } catch (error) {
+      toast.error((error as Error).message || '构建失败');
+    } finally {
+      setBuilding(false);
     }
   };
 
@@ -308,164 +494,395 @@ export default function OpenServicesPage() {
           </Button>
         </div>
 
-        <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {types.map((item: any) => {
-            const Icon = TYPE_ICONS[item.code] || Plug;
-            return (
-              <Card key={item.code}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Icon className="h-4 w-4 text-primary" />
-                    {item.name}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <p className="text-muted-foreground">{item.description}</p>
-                  <div className="space-y-1">
-                    {(item.quickStart || []).slice(0, 3).map((step: string) => (
-                      <p key={step} className="text-xs leading-5 text-muted-foreground">
-                        {step}
-                      </p>
+        {/* 集成凭证（仅平台账号可见，含发放/编辑/轮换/删除） */}
+        {isPlatform && canManage && (
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <KeyRound className="h-4 w-4 text-primary" />
+              集成凭证
+              <Badge variant="secondary" className="ml-2 text-xs">置顶</Badge>
+            </CardTitle>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="mr-2 h-4 w-4" />
+              发放密钥
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                加载中...
+              </div>
+            ) : clients.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                尚未发放凭证。创建后把 API Key 交给集成商即可调用开放接口。
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 font-medium">名称</th>
+                      <th className="py-2 font-medium">编码</th>
+                      <th className="py-2 font-medium">密钥前缀</th>
+                      <th className="py-2 font-medium">限流 / 配额</th>
+                      <th className="py-2 font-medium">用量</th>
+                      <th className="py-2 font-medium">状态</th>
+                      <th className="py-2 font-medium">最近使用</th>
+                      <th className="py-2 font-medium" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map((client) => (
+                      <tr key={client.id} className="border-b last:border-0">
+                        <td className="py-3">{client.name}</td>
+                        <td className="py-3 font-mono text-xs">{client.code}</td>
+                        <td className="py-3 font-mono text-xs">{client.keyPrefix}...</td>
+                        <td className="py-3 text-xs text-muted-foreground">
+                          {client.sandbox ? '沙箱 · ' : ''}
+                          {client.rateLimitPerMinute || 0}/分
+                          {client.monthlyCallQuota ? ` · 月调用 ${client.monthlyCallQuota}` : ''}
+                          {(client.ipWhitelist || []).length > 0 ? ` · IP ${client.ipWhitelist.length}` : ''}
+                        </td>
+                        <td className="py-3 text-xs text-muted-foreground">
+                          今日 {client.usage?.today?.apiCalls ?? 0} 次
+                          <br />
+                          本月写入 {client.usage?.month?.rowsWritten ?? 0} 行
+                        </td>
+                        <td className="py-3">
+                          <Badge variant={client.status === 'active' ? 'success' : 'secondary'}>
+                            {client.status === 'active' ? '启用' : client.status}
+                          </Badge>
+                        </td>
+                        <td className="py-3 text-muted-foreground">{formatDate(client.lastUsedAt)}</td>
+                        <td className="py-3 text-right">
+                          <div className="flex justify-end gap-1">
+                              <Button variant="ghost" size="sm" title="编辑" onClick={() => openEdit(client)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="轮换密钥" onClick={() => setRotateId(client.id)}>
+                                <KeyRound className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="删除" onClick={() => setDeleteId(client.id)}>
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                          </div>
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        )}
 
-        <div className="mb-6 grid gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">集成凭证</CardTitle>
-              {canManage && (
-                <Button size="sm" onClick={openCreate}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  发放密钥
+        {/* SDK 构建下载 */}
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Package className="h-4 w-4 text-primary" />
+              SDK 构建与下载
+              {sdkData?.latest && (
+                <Badge variant="outline" className="ml-2 font-mono text-xs">
+                  v{sdkData.latest.version}
+                </Badge>
+              )}
+            </CardTitle>
+            <div className="flex gap-2">
+              {isPlatform && canManage && (
+                <Button size="sm" variant="default" onClick={handleBuildSdk} disabled={building}>
+                  {building ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Hammer className="mr-2 h-4 w-4" />
+                  )}
+                  {building ? '构建中...' : '构建最新包'}
                 </Button>
               )}
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  加载中...
-                </div>
-              ) : clients.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  尚未发放凭证。创建后把 API Key 交给集成商即可调用开放接口。
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        <th className="py-2 font-medium">名称</th>
-                        <th className="py-2 font-medium">编码</th>
-                        <th className="py-2 font-medium">密钥前缀</th>
-                        <th className="py-2 font-medium">限流 / 配额</th>
-                        <th className="py-2 font-medium">用量</th>
-                        <th className="py-2 font-medium">状态</th>
-                        <th className="py-2 font-medium">最近使用</th>
-                        <th className="py-2 font-medium" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clients.map((client) => (
-                        <tr key={client.id} className="border-b last:border-0">
-                          <td className="py-3">{client.name}</td>
-                          <td className="py-3 font-mono text-xs">{client.code}</td>
-                          <td className="py-3 font-mono text-xs">{client.keyPrefix}...</td>
-                          <td className="py-3 text-xs text-muted-foreground">
-                            {client.sandbox ? '沙箱 · ' : ''}
-                            {client.rateLimitPerMinute || 0}/分
-                            {client.monthlyCallQuota ? ` · 月调用 ${client.monthlyCallQuota}` : ''}
-                            {(client.ipWhitelist || []).length > 0 ? ` · IP ${client.ipWhitelist.length}` : ''}
-                          </td>
-                          <td className="py-3 text-xs text-muted-foreground">
-                            今日 {client.usage?.today?.apiCalls ?? 0} 次
-                            <br />
-                            本月写入 {client.usage?.month?.rowsWritten ?? 0} 行
-                          </td>
-                          <td className="py-3">
-                            <Badge variant={client.status === 'active' ? 'success' : 'secondary'}>
-                              {client.status === 'active' ? '启用' : client.status}
-                            </Badge>
-                          </td>
-                          <td className="py-3 text-muted-foreground">{formatDate(client.lastUsedAt)}</td>
-                          <td className="py-3 text-right">
-                            {canManage && (
-                              <div className="flex justify-end gap-1">
-                                <Button variant="ghost" size="sm" title="编辑" onClick={() => openEdit(client)}>
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button variant="ghost" size="sm" title="轮换密钥" onClick={() => setRotateId(client.id)}>
-                                  <KeyRound className="h-4 w-4" />
-                                </Button>
-                                <Button variant="ghost" size="sm" title="删除" onClick={() => setDeleteId(client.id)}>
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              {sdkData?.latest && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  asChild
+                >
+                  <a
+                    href={openApi.downloadSdkUrl(sdkData.latest.filename)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    下载最新 wheel
+                  </a>
+                </Button>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">鉴权方式</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <p className="text-muted-foreground">
-                {catalog?.auth?.note || '密钥仅在创建时显示一次。'}
-              </p>
-              <div className="rounded-md bg-muted p-3 font-mono text-xs">
-                X-Api-Key: ipk_...
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3 rounded-md bg-muted p-3 text-xs text-muted-foreground">
+              <p className="mb-1 font-medium">安装命令</p>
+              <code className="font-mono">
+                pip install {sdkData?.latest?.filename || 'integration_hub-<version>-py3-none-any.whl'}
+              </code>
+            </div>
+            {sdkData?.builds && sdkData.builds.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 font-medium">版本</th>
+                      <th className="py-2 font-medium">类型</th>
+                      <th className="py-2 font-medium">大小</th>
+                      <th className="py-2 font-medium">构建时间</th>
+                      <th className="py-2 font-medium">文件名</th>
+                      <th className="py-2 font-medium text-right" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sdkData.builds.map((b: any) => (
+                      <tr key={b.filename} className="border-b last:border-0">
+                        <td className="py-3 font-mono text-xs">v{b.version}</td>
+                        <td className="py-3">
+                          <Badge variant={b.kind === 'wheel' ? 'success' : 'secondary'} className="text-xs">
+                            {b.kind === 'wheel' ? 'wheel' : 'sdist'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 text-xs text-muted-foreground">{b.sizeText}</td>
+                        <td className="py-3 text-xs text-muted-foreground">
+                          {new Date(b.mtime * 1000).toLocaleString('zh-CN')}
+                        </td>
+                        <td className="py-3 font-mono text-xs text-muted-foreground">{b.filename}</td>
+                        <td className="py-3 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title={`下载 ${b.filename}`}
+                            asChild
+                          >
+                            <a
+                              href={openApi.downloadSdkUrl(b.filename)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <Download className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  最多展示最近 10 次构建。点"构建最新包"会重新跑 <code className="font-mono">python -m build</code>，新版本会出现在列表顶部。
+                </p>
               </div>
-              <div className="rounded-md bg-muted p-3 font-mono text-xs">
-                Authorization: Bearer ipk_...
-              </div>
-              <p className="text-xs text-muted-foreground">
-                已接入 {catalog?.connectorCount ?? 0} 个连接器。目录接口无需密钥：
-                <span className="ml-1 font-mono">GET /api/open/catalog</span>
+            ) : (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                暂无构建产物。点击右上角"构建最新包"生成 wheel。
               </p>
-            </CardContent>
+            )}
+          </CardContent>
         </Card>
-      </div>
 
-        <div className="mb-6 grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">服务状态</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm text-muted-foreground">
-              <p>状态：{statusInfo?.status || '未知'} · 环境 {statusInfo?.environment || '-'} · 队列 {statusInfo?.queueBackend || '-'}</p>
-              <p className="text-xs">
-                真实读写：{(statusInfo?.runtime?.extract || []).join('、') || '加载中'}
+        {/* 应用对接清单 */}
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileText className="h-4 w-4 text-primary" />
+              应用对接清单
+            </CardTitle>
+            <div className="flex gap-2">
+              {selectedApp && (
+                <>
+                  <Button variant="outline" size="sm" onClick={copyGuide}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    复制清单
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={downloadGuide}>
+                    <Download className="mr-2 h-4 w-4" />
+                    下载 .md
+                  </Button>
+                </>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-4">
+              <Label className="mb-2 block text-sm">选择应用</Label>
+              <Select value={selectedAppId} onValueChange={handleSelectApp}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择一个应用查看对接信息" />
+                </SelectTrigger>
+                <SelectContent>
+                  {apps.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}（{a.code}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedApp ? (
+              <div className="space-y-4">
+                <div className="rounded-md border p-4">
+                  <p className="mb-3 text-sm font-medium">一、中台侧信息（直接复制给对方）</p>
+                  <div className="grid gap-2 text-xs md:grid-cols-2">
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">中台地址</span>
+                      <code className="font-mono">{(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}</code>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">AppID</span>
+                      <code className="font-mono">{selectedApp.id}</code>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">Audience (code)</span>
+                      <code className="font-mono">{selectedApp.code}</code>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">验签模式</span>
+                      <code className="font-mono">
+                        {selectedApp.settings?.useRsa === true || selectedApp.settings?.useRsa === 'true' ? 'RS256' : 'HS256'}
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">JWKS 端点</span>
+                      <code className="font-mono text-[10px]">
+                        {(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}/api/sso/.well-known/jwks.json
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
+                      <span className="text-muted-foreground">SDK wheel</span>
+                      <code className="font-mono text-[10px]">
+                        {sdkData?.latest?.filename || 'integration_hub-1.5.0-py3-none-any.whl'}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-md border p-4">
+                  <p className="mb-3 text-sm font-medium">二、对方需要做的 3 件事</p>
+                  <ol className="ml-4 list-decimal space-y-2 text-xs text-muted-foreground">
+                    <li>
+                      <span className="font-medium text-foreground">安装 SDK</span>
+                      <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs">{`pip install ${sdkData?.latest?.filename || 'integration_hub-1.5.0-py3-none-any.whl'}`}</pre>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">5 行配置（Django settings.py）</span>
+                      <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs leading-5">{`from integration_hub.sso import configure
+configure(
+    platform_url="${(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}",
+    audience="${selectedApp.code}",
+    app_id="${selectedApp.id}",
+    auto_create_user=True,
+    default_redirect="/dashboard",
+)
+MIDDLEWARE += ["integration_hub.sso.middleware.django_sso_callback"]`}</pre>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">挂载落地路由（urls.py）</span>
+                      <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs">{`from integration_hub.sso.middleware import django_sso_callback_view
+urlpatterns += [path("sso/callback", django_sso_callback_view)]`}</pre>
+                    </li>
+                  </ol>
+                </div>
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-xs dark:border-amber-900 dark:bg-amber-950/40">
+                  <p className="mb-1 font-medium">⚠ 中台这一侧必须确认的配置</p>
+                  <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
+                    <li><code className="font-mono">loginUrl</code> = <code className="font-mono">{selectedApp.loginUrl || '(未配置，需指向对方 /sso/callback)'}</code></li>
+                    <li><code className="font-mono">settings.useRsa</code> = <code className="font-mono">{String(selectedApp.settings?.useRsa === true || selectedApp.settings?.useRsa === 'true')}</code>（应为 true 才走 RS256）</li>
+                    <li><code className="font-mono">jwtExpiresIn</code> = <code className="font-mono">{selectedApp.jwtExpiresIn ?? 300}</code> 秒</li>
+                    <li><code className="font-mono">loginType</code> = <code className="font-mono">{selectedApp.loginType}</code>（应为 jwt）</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                请先在应用管理创建应用
               </p>
-              <p className="text-xs font-mono">GET /api/open/status · GET /api/open/openapi.json</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">错误码 / Changelog</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs text-muted-foreground">
-              {(changelog[0]?.items || []).slice(0, 4).map((item: string) => (
-                <p key={item}>· {item}</p>
-              ))}
-              <p className="pt-1 font-mono">
-                GET /api/open/errors（{errors.length} 条） · GET /api/open/changelog
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 收纳区：类型目录 / 鉴权方式 / 服务状态 / 错误码 */}
+        <Tabs defaultValue="catalog" className="mb-6">
+          <TabsList>
+            <TabsTrigger value="catalog">类型目录</TabsTrigger>
+            <TabsTrigger value="auth">鉴权方式</TabsTrigger>
+            <TabsTrigger value="status">服务状态</TabsTrigger>
+            <TabsTrigger value="errors">错误码 / Changelog</TabsTrigger>
+          </TabsList>
+          <TabsContent value="catalog">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  {types.map((item: any) => {
+                    const Icon = TYPE_ICONS[item.code] || Plug;
+                    return (
+                      <div key={item.code} className="rounded-md border p-4">
+                        <div className="mb-2 flex items-center gap-2 text-base font-medium">
+                          <Icon className="h-4 w-4 text-primary" />
+                          {item.name}
+                        </div>
+                        <p className="mb-2 text-sm text-muted-foreground">{item.description}</p>
+                        <div className="space-y-1">
+                          {(item.quickStart || []).slice(0, 3).map((step: string) => (
+                            <p key={step} className="text-xs leading-5 text-muted-foreground">
+                              {step}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="auth">
+            <Card>
+              <CardContent className="space-y-3 pt-6 text-sm">
+                <p className="text-muted-foreground">
+                  {catalog?.auth?.note || '密钥仅在创建时显示一次。'}
+                </p>
+                <div className="rounded-md bg-muted p-3 font-mono text-xs">
+                  X-Api-Key: ipk_...
+                </div>
+                <div className="rounded-md bg-muted p-3 font-mono text-xs">
+                  Authorization: Bearer ipk_...
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  已接入 {catalog?.connectorCount ?? 0} 个连接器。目录接口无需密钥：
+                  <span className="ml-1 font-mono">GET /api/open/catalog</span>
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="status">
+            <Card>
+              <CardContent className="space-y-2 pt-6 text-sm text-muted-foreground">
+                <p>状态：{statusInfo?.status || '未知'} · 环境 {statusInfo?.environment || '-'} · 队列 {statusInfo?.queueBackend || '-'}</p>
+                <p className="text-xs">
+                  真实读写：{(statusInfo?.runtime?.extract || []).join('、') || '加载中'}
+                </p>
+                <p className="text-xs font-mono">GET /api/open/status · GET /api/open/openapi.json</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="errors">
+            <Card>
+              <CardContent className="space-y-2 pt-6 text-xs text-muted-foreground">
+                {(changelog[0]?.items || []).slice(0, 4).map((item: string) => (
+                  <p key={item}>· {item}</p>
+                ))}
+                <p className="pt-1 font-mono">
+                  GET /api/open/errors（{errors.length} 条） · GET /api/open/changelog
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">

@@ -21,7 +21,7 @@ ALL_PERMISSIONS = [
     "app:read", "app:write", "app:delete",
     "application:write", "application:delete",
     "sso:audit", "sso:manage",
-    "open:manage",
+    "open:manage", "open:read",
 ]
 
 
@@ -71,6 +71,7 @@ def seed_system() -> dict:
         "deadletter:read", "deadletter:retry",
         "audit:read",
         "app:read",
+        "open:read",
     ])
     grant(operator, [
         "datasource:read",
@@ -79,10 +80,12 @@ def seed_system() -> dict:
         "dlq:read", "dlq:reprocess",
         "deadletter:read", "deadletter:retry", "deadletter:delete",
         "audit:read",
+        "open:read",
     ])
     grant(viewer, [
         "datasource:read", "job:read", "execution:read",
         "dlq:read", "deadletter:read", "audit:read", "app:read",
+        "open:read",
     ])
 
     admin_user = User(

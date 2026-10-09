@@ -67,7 +67,7 @@ const navItems: SidebarItem[] = [
   { label: '执行监控', href: '/executions', icon: Activity, permission: 'execution:read' },
   { label: '死信队列', href: '/dead-letters', icon: AlertTriangle, permission: 'dlq:read' },
   { label: '应用管理', href: '/apps/manage', icon: Settings, permission: 'app:read' },
-  { label: '开放服务', href: '/open', icon: Plug, permission: 'open:manage', platformOnly: true },
+  { label: '开放服务', href: '/open', icon: Plug, permission: 'open:read' },
   { label: '登录日志', href: '/sso-logs', icon: FileText, permission: 'app:read' },
   { label: '用户管理', href: '/users', icon: Users, permission: 'user:read' },
   { label: '审计日志', href: '/audit-logs', icon: History, permission: 'audit:read' },

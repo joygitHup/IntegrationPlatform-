@@ -34,6 +34,7 @@ PERM_ALIASES = {
     "application:delete": ("app:delete",),
     "user:delete": ("user:write",),
     "open:manage": ("system:write",),
+    "open:read": ("open:manage", "system:read", "system:write"),
 }
 
 

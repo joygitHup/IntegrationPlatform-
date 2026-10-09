@@ -1,13 +1,41 @@
 [project]
 name = "integration-hub"
-version = "1.2.0"
-description = "集成中台开放服务 Python SDK"
-requires-python = ">=3.10"
+version = "1.5.0"
+description = "集成中台开放服务 Python SDK：开放 API、SSO 5 种类型接入、跳板模式"
 readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Integration Platform" }]
+keywords = ["sso", "oauth2", "saml", "integration", "jwt", "jwks"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "PyJWT>=2.9",          # RS256 + JWKS + PyJWKClient
+    "cryptography>=43.0",  # RSA 密钥管理（SAML 验签也依赖）
+    "lxml>=5.3",           # SAML 断言 XML-DSig 验签（已列入 backend requirements）
+]
+
+[project.optional-dependencies]
+# Flask 中间件用
+flask = ["flask>=3.0"]
+# FastAPI 中间件用
+fastapi = ["fastapi>=0.115"]
+# 开发与构建
+dev = ["build>=1.2", "twine>=5.1", "pytest>=8.0"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["integration_hub*"]
+
+[tool.setuptools.package-data]
+integration_hub = ["py.typed", "*.pyi"]

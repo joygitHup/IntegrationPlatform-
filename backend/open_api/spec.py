@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 
+def _api_base() -> str:
+    from core.public_urls import api_base_url
+
+    return api_base_url()
+
+
 def build_openapi() -> dict:
     return {
         "openapi": "3.0.3",
@@ -15,7 +21,11 @@ def build_openapi() -> dict:
                 "目录、连接器、模板、本规范无需密钥。"
             ),
         },
-        "servers": [{"url": "/api", "description": "当前环境"}],
+        "servers": [
+            # 对外绝对地址：反代后集成商据此生成客户端，不受内网 Host 影响
+            {"url": _api_base(), "description": "对外地址（PUBLIC_BASE_URL + PUBLIC_API_PREFIX）"},
+            {"url": "/api", "description": "同源相对路径（兼容）"},
+        ],
         "tags": [
             {"name": "catalog", "description": "能力目录"},
             {"name": "apps", "description": "应用集成"},
