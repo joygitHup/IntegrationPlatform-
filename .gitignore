@@ -164,3 +164,12 @@ Desktop.ini
 .coze-logs
 .codegraph/
 .workbuddy/
+
+# License / keys
+backend/config/private_key.pem
+backend/config/public_key.pem
+license.json
+
+# Docker volumes
+pgdata/
+redis-data/

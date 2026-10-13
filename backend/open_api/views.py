@@ -845,6 +845,40 @@ class OpenStatusView(APIView):
         })
 
 
+class OpenHealthView(APIView):
+    """公开健康检查：DB / Redis / 队列 / 版本。"""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.db import connection
+        from django.conf import settings
+
+        checks = {"db": True, "redis": None, "queue": "memory", "version": settings.PLATFORM_VERSION}
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+        except Exception as exc:
+            checks["db"] = False
+            checks["db_error"] = str(exc)
+        redis_url = getattr(settings, "REDIS_URL", "") or ""
+        if redis_url:
+            try:
+                import redis as _r
+                client = _r.Redis.from_url(redis_url, socket_timeout=1)
+                client.ping()
+                checks["redis"] = True
+            except Exception as exc:
+                checks["redis"] = False
+                checks["redis_error"] = str(exc)
+            if getattr(settings, "QUEUE_BACKEND", "") == "celery":
+                checks["queue"] = "celery"
+            else:
+                checks["queue"] = "memory"
+        status = 200 if checks["db"] is True else 503
+        return Response(checks, status=status)
+
+
 class OpenErrorCatalogView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -912,6 +946,11 @@ class OpenRegisterView(APIView):
 
         ensure_entitlement(
             client.id,
+            plan="trial",
+            expires_at=(
+                __import__("django.utils.timezone", fromlist=["timezone"]).timezone.now()
+                + __import__("datetime", fromlist=["timedelta"]).timedelta(days=30)
+            ),
             max_api_calls_monthly=int(getattr(settings, "OPEN_SANDBOX_CALL_QUOTA", 10000) or 10000),
             max_rows_monthly=int(getattr(settings, "OPEN_SANDBOX_ROW_QUOTA", 100000) or 100000),
         )
@@ -1056,6 +1095,7 @@ class OpenSdkBuildView(APIView):
                 )
                 return r.returncode == 0
             except Exception:
+                # python 不可执行 / build 未装 / subprocess 超时，都让下一个候选接手
                 return False
 
         venv_python = next((p for p in candidates if _has_build(p)), "")

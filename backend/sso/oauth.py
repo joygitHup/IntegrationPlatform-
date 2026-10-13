@@ -156,6 +156,9 @@ def complete_authorization(app: Application, *, code: str, state: str, ip: str =
 
 
 def _jwks_url(app: Application) -> str:
+    import logging
+
+    logger = logging.getLogger(__name__)
     extra = app.settings if isinstance(app.settings, dict) else {}
     explicit = extra.get("oauthJwksUrl") or extra.get("jwksUrl") or extra.get("jwks_url")
     if explicit:
@@ -170,7 +173,8 @@ def _jwks_url(app: Application) -> str:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8", "ignore") or "{}")
         return str(data.get("jwks_uri") or "")
-    except Exception:
+    except Exception as exc:
+        logger.warning("OAuth discovery 失败 app=%s issuer=%s reason=%s，回退到硬编码 jwks", app.code, issuer, exc)
         return issuer + "/.well-known/jwks.json"
 
 

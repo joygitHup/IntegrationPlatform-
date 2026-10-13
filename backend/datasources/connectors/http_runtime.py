@@ -141,11 +141,15 @@ def load_row(config: dict, job_cfg: dict, row: dict, *, method: str | None = Non
 
 
 def fetch_existing_map(config: dict, job_cfg: dict, match_keys: list[str]) -> dict[str, dict]:
+    import logging
+
+    logger = logging.getLogger(__name__)
     if not match_keys:
         return {}
     try:
         records = extract(config, {**job_cfg, "sync_mode": "full", "watermark_value": ""})
-    except Exception:
+    except Exception as exc:
+        logger.warning("fetch_existing_map 拉取已有记录失败: %s", exc)
         return {}
     result: dict[str, dict] = {}
     for rec in records:

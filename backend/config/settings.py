@@ -8,11 +8,15 @@
 """
 from __future__ import annotations
 
+import json as _json
+import logging
 import os
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+
+from config.version import VERSION
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -21,6 +25,10 @@ load_dotenv(BASE_DIR / ".env")
 def _env(key: str, default: str | None = None) -> str | None:
     value = os.getenv(key)
     return value if value not in (None, "") else default
+
+
+PLATFORM_VERSION = VERSION
+LICENSE_FILE = _env("LICENSE_FILE", "license.json") or "license.json"
 
 
 SECRET_KEY = _env("DJANGO_SECRET_KEY", "dev-only-change-me")
@@ -129,9 +137,12 @@ if DEBUG:
     # 开发环境允许本机任意端口（端口占用顺延 +1 时无需改配置）
     CORS_ALLOW_ALL_ORIGINS = True
 else:
+    # 生产默认空，必须显式配置 CORS_ALLOWED_ORIGINS。
+    # 生产如果忘记配，浏览器跨域请求会被 block（安全失败），
+    # 而不是悄悄放给 localhost。
     CORS_ALLOWED_ORIGINS = [
         o.strip()
-        for o in (_env("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5004,http://127.0.0.1:5004") or "").split(",")
+        for o in (_env("CORS_ALLOWED_ORIGINS", "") or "").split(",")
         if o.strip()
     ]
 CORS_ALLOW_HEADERS = ["*"]
@@ -272,6 +283,35 @@ SMTP_USE_TLS = (_env("SMTP_USE_TLS", "true") or "true").lower() in ("1", "true",
 LOGIN_RATE_LIMIT = 5
 LOGIN_RATE_WINDOW_SECONDS = 60
 
+class _JsonFormatter(logging.Formatter):
+    """无外部依赖的 JSON 日志 formatter，兼容 StreamHandler。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            from datetime import datetime, timezone
+            ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat()
+        except Exception:
+            ts = self.formatTime(record)
+        payload = {
+            "timestamp": ts,
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.pathname:
+            payload["path"] = record.pathname
+        if record.lineno:
+            payload["lineno"] = record.lineno
+        if record.exc_info and record.exc_info[0] is not None:
+            payload["exception"] = self.formatException(record.exc_info)
+        try:
+            return _json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception:
+            return _json.dumps({k: str(v) for k, v in payload.items()}, ensure_ascii=False)
+
+
+# 开发态人眼友好（standard），生产态 ELK/Loki 友好（json）
+_LOG_HANDLER = "console" if DEBUG else "console_json"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -280,9 +320,11 @@ LOGGING = {
             "format": "[{asctime}] {levelname} {name}: {message}",
             "style": "{",
         },
+        "json": {"()": lambda: _JsonFormatter()},
     },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+        "console_json": {"class": "logging.StreamHandler", "formatter": "json"},
     },
-    "root": {"handlers": ["console"], "level": "INFO"},
+    "root": {"handlers": [_LOG_HANDLER], "level": "INFO"},
 }

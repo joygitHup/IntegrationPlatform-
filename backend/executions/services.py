@@ -181,6 +181,22 @@ def dead_letter_summary(qs=None) -> dict:
 
 
 def enqueue_execution(job, *, trigger_type: str, triggered_by: str = "", payload=None) -> dict:
+    # 手动触发前做软配额预检：仅打 warning 日志（ETL 运行时会硬拦）
+    if trigger_type in ("manual", "retry"):
+        try:
+            from open_api.entitlements import gate_rows
+
+            owner_cid = getattr(job, "client_id", "") or getattr(job, "created_by", "") or ""
+            if owner_cid and gate_rows(owner_cid, 1, raise_on_deny=False) is False:
+                logger.warning(
+                    "任务手动触发前预检发现月行数已超限，执行到 ETL 主循环时将拦截。"
+                    " job=%s client_id=%s trigger_type=%s",
+                    job.code, owner_cid, trigger_type,
+                )
+        except Exception:
+            # 预检本身不该影响入队主流程
+            pass
+
     from executions.dag import has_dag, start_workflow
 
     if has_dag(job) and not getattr(job, "_skip_dag", False):

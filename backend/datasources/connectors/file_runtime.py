@@ -120,6 +120,9 @@ def sftp_extract(config: dict, job_cfg: dict) -> list[dict]:
 
 
 def sftp_load(config: dict, job_cfg: dict, row: dict) -> None:
+    import logging
+
+    logger = logging.getLogger(__name__)
     path = _remote_path(config, job_cfg)
     if not path:
         raise RuntimeError("请填写目标文件路径")
@@ -129,8 +132,8 @@ def sftp_load(config: dict, job_cfg: dict, row: dict) -> None:
         try:
             with sftp.file(path, "rb") as fh:
                 existing = fh.read().decode("utf-8", "ignore")
-        except Exception:
-            existing = ""
+        except Exception as exc:
+            logger.debug("SFTP 目标文件不存在或不可读 path=%s: %s", path, exc)
         rows = _parse_tabular(existing, path) if existing.strip() else []
         rows.append(row)
         data = _to_csv(rows).encode("utf-8")
@@ -242,6 +245,9 @@ def s3_load(config: dict, job_cfg: dict, row: dict) -> None:
 
 
 def csv_extract(config: dict, job_cfg: dict) -> list[dict]:
+    import logging
+
+    logger = logging.getLogger(__name__)
     path = _remote_path(config, job_cfg)
     if not path:
         raise RuntimeError("请填写 filePath")
@@ -253,8 +259,8 @@ def csv_extract(config: dict, job_cfg: dict) -> list[dict]:
     if not path.lower().endswith((".xlsx", ".xls")):
         try:
             raw = raw.decode(encoding).encode("utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("文件 %s 编码 %s 解码失败，按原始字节继续: %s", path, encoding, exc)
     return _parse_tabular(raw, path)[: _limit(job_cfg)]
 
 

@@ -40,7 +40,8 @@ def decrypt(encrypted_text: str) -> str:
     try:
         parts = encrypted_text.split(":")
         if len(parts) != 2:
-            return encrypted_text  # 兼容明文旧数据
+            # 旧明文数据或被手动改过：直接返回
+            return encrypted_text
         iv = base64.b64decode(parts[0])
         encrypted = base64.b64decode(parts[1])
         cipher = Cipher(algorithms.AES(_get_key()), modes.CBC(iv))
@@ -50,8 +51,14 @@ def decrypt(encrypted_text: str) -> str:
         if 1 <= pad_len <= 16:
             data = data[:-pad_len]
         return data.decode("utf-8")
-    except Exception:
-        return encrypted_text
+    except Exception as exc:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        # 解密失败 = 密钥变了 / 密文被改 / 数据库里混了明文
+        # 绝不静默返回 encrypted_text（下游拿到乱串当明文用等于加密失效）
+        logger.exception("解密失败，密钥或密文不匹配: %s", type(exc).__name__)
+        raise
 
 
 def mask_sensitive(value: str, keep_start: int = 3, keep_end: int = 2) -> str:

@@ -33,17 +33,19 @@ def _already_alerted_today(client_id: str, metric: str) -> bool:
     return False
 
 
-def alert_over_quota(client, metric: str, *, used: int, limit: int, extra: dict | None = None) -> None:
-    if client is None:
+def alert_over_quota(client, metric: str, *, used: int, limit: int, extra: dict | None = None, client_id: str | None = None) -> None:
+    # client 可能为 None（自建任务无 IntegrationClient），此时用显式 client_id 作为唯一标识
+    cid = (str(getattr(client, "id", "") or "") if client is not None else "") or (client_id or "")
+    if not cid:
+        logger.debug("配额告警跳过：无法解析 client_id metric=%s", metric)
         return
-    cid = str(getattr(client, "id", "") or "")
     label = METRIC_LABELS.get(metric, metric)
     body = {
         "event": "entitlement.over_quota",
         "deploymentMode": "private",
         "action": "allowed_with_alert",
         "clientId": cid,
-        "clientName": getattr(client, "name", ""),
+        "clientName": getattr(client, "name", "") if client is not None else "",
         "metric": metric,
         "metricLabel": label,
         "used": used,
@@ -51,9 +53,9 @@ def alert_over_quota(client, metric: str, *, used: int, limit: int, extra: dict 
         **(extra or {}),
     }
     logger.warning("配额超限（私有化放行并告警）client=%s metric=%s used=%s limit=%s", cid, metric, used, limit)
-    if cid and _already_alerted_today(cid, metric):
+    if _already_alerted_today(cid, metric):
         return
-    hook = (getattr(client, "alert_webhook_url", "") or "").strip()
+    hook = (getattr(client, "alert_webhook_url", "") or "").strip() if client is not None else ""
     if hook:
         try:
             from urllib.request import Request, urlopen
@@ -64,7 +66,7 @@ def alert_over_quota(client, metric: str, *, used: int, limit: int, extra: dict 
                 pass
         except Exception:
             logger.exception("配额告警 Webhook 发送失败 client=%s", cid)
-    email = (getattr(client, "alert_email", "") or "").strip()
+    email = (getattr(client, "alert_email", "") or "").strip() if client is not None else ""
     if email:
         try:
             from executions.alerts import _send_mail

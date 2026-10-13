@@ -43,8 +43,22 @@ def ensure_entitlement(client_id: str, **defaults):
         return None
     obj = ClientEntitlement.objects.filter(client_id=client_id).first()
     if obj:
+        # 已存在：合并 plan / expires_at / 配额字段（None 不覆盖）
+        from datetime import datetime as _dt
+        if "plan" in defaults and defaults["plan"]:
+            obj.plan = str(defaults["plan"])
+        if "expires_at" in defaults and defaults["expires_at"] is not None:
+            obj.expires_at = defaults["expires_at"]
+        for field in LIMIT_FIELDS:
+            if field in defaults and defaults[field]:
+                setattr(obj, field, max(0, int(defaults[field])))
+        if "plan_features_json" in defaults and defaults["plan_features_json"]:
+            obj.plan_features_json = defaults["plan_features_json"]
+        obj.save()
         return obj
-    return ClientEntitlement.objects.create(client_id=client_id, **{k: v for k, v in defaults.items() if k in LIMIT_FIELDS})
+    # 新建：pick 所有合法字段
+    create_kwargs = {k: v for k, v in defaults.items() if k in LIMIT_FIELDS or k in ("plan", "expires_at", "plan_features_json")}
+    return ClientEntitlement.objects.create(client_id=client_id, **create_kwargs)
 
 
 def update_entitlement(client_id: str, values: dict):
@@ -59,11 +73,38 @@ def update_entitlement(client_id: str, values: dict):
 
 
 def effective_limits(client_id: str) -> dict:
-    """无授权记录 = 全部 0（不限），私有化直接用。"""
+    """无授权记录 = 全部 0（不限），私有化直接用。
+
+    私有化模式 + 存在 license.json 时，license 配额是硬性上限——DB 不能超 license。
+    SaaS 模式跳过 license 校验（在线计费由 SaaS 自己的系统管）。
+    """
     ent = get_entitlement(client_id)
     if ent is None:
-        return {field: 0 for field in LIMIT_FIELDS}
-    return {field: int(getattr(ent, field) or 0) for field in LIMIT_FIELDS}
+        limits = {field: 0 for field in LIMIT_FIELDS}
+    else:
+        limits = {field: int(getattr(ent, field) or 0) for field in LIMIT_FIELDS}
+
+    # 私有化 + 有 license 时做 min() 夹逼
+    if client_id and not is_saas():
+        try:
+            from django.conf import settings
+
+            from core.license import _license_path
+
+            lic_path = _license_path()
+            if lic_path.is_file():
+                from core.license import get_effective_entitlements
+
+                lic = get_effective_entitlements(client_id)
+                for field in LIMIT_FIELDS:
+                    lic_val = lic.get(field, 0)
+                    if lic_val:  # license 里 0 表示该维度不限，不参与 min
+                        limits[field] = min(limits.get(field, 0) or lic_val, lic_val)
+        except Exception:
+            # license 校验异常不阻断业务
+            pass
+
+    return limits
 
 
 def current_counts(client_id: str) -> dict:
@@ -84,14 +125,14 @@ def _get_client(client_id: str):
     return IntegrationClient.objects.filter(id=client_id).first()
 
 
-def _deny_or_alert(client, metric: str, *, used: int, limit: int, status: int, code: str, message: str, raise_on_deny: bool = True) -> bool:
+def _deny_or_alert(client, metric: str, *, used: int, limit: int, status: int, code: str, message: str, raise_on_deny: bool = True, client_id: str | None = None) -> bool:
     if is_saas():
         if raise_on_deny:
             raise ApiError(message, status, code=code)
         return False
     from open_api.quota_alerts import alert_over_quota
 
-    alert_over_quota(client, metric, used=used, limit=limit)
+    alert_over_quota(client, metric, used=used, limit=limit, client_id=client_id or (str(getattr(client, "id", "") or "") if client is not None else ""))
     return True
 
 
@@ -115,6 +156,7 @@ def gate_resource(client_id: str, kind: str, *, delta: int = 1) -> None:
         status=403,
         code="ENTITLEMENT_EXCEEDED",
         message=f"授权{label}已达上限（{limit}），请联系中台运营扩容",
+        client_id=client_id,
     )
 
 
@@ -153,6 +195,7 @@ def gate_rows(client_id: str, incoming_rows: int, *, raise_on_deny: bool = True)
         code="QUOTA_EXCEEDED",
         message=f"本月写入行数将超过授权上限（{limit}），请联系中台运营扩容",
         raise_on_deny=raise_on_deny,
+        client_id=client_id,
     )
 
 
@@ -176,6 +219,7 @@ def gate_api_calls(client_id: str) -> None:
         status=429,
         code="QUOTA_EXCEEDED",
         message=f"本月 API 调用次数已达授权上限（{limit}），请联系中台运营扩容",
+        client_id=client_id,
     )
 
 
@@ -183,7 +227,10 @@ def entitlement_payload(client_id: str) -> dict:
     limits = effective_limits(client_id)
     counts = current_counts(client_id) if client_id else {"jobs": 0, "connectors": 0, "seats": 0}
     month = monthly_usage(client_id) if client_id else {"apiCalls": 0, "rowsWritten": 0}
+    ent = get_entitlement(client_id)
     return {
+        "plan": get_plan(client_id),
+        "expiresAt": ent.expires_at.isoformat() if ent and ent.expires_at else None,
         "limits": {
             "maxJobs": limits["max_jobs"],
             "maxSeats": limits["max_seats"],
@@ -200,3 +247,46 @@ def entitlement_payload(client_id: str) -> dict:
         },
         "deploymentMode": "saas" if is_saas() else "private",
     }
+
+
+# ===== Plan / Feature Gate =====
+
+# Trial plan 禁止的 feature 映射。每个 feature 是业务含义键，在具体入口处消费。
+_TRIAL_BLOCKS_FEATURES = {
+    # 环境
+    "environment_prod": "试用版只允许 dev 环境",
+    "environment_staging": "试用版只允许 dev 环境",
+    # SSO 登录方式（试用版只开放 JWT）
+    "sso_oauth2": "试用版 SSO 仅支持 JWT 模式",
+    "sso_saml": "试用版 SSO 仅支持 JWT 模式",
+    "sso_ticket": "试用版 SSO 仅支持 JWT 模式",
+    "sso_form_based": "试用版 SSO 仅支持 JWT 模式",
+}
+
+
+def get_plan(client_id: str) -> str:
+    """返回 client 的订阅计划。无 ClientEntitlement 时返回 'standard'（向后兼容旧数据）。"""
+    if not client_id:
+        return "standard"
+    ent = get_entitlement(client_id)
+    if ent is None:
+        return "standard"
+    return (ent.plan or "standard").strip().lower() or "standard"
+
+
+def plan_deny_reason(client_id: str, feature: str) -> str | None:
+    """trial plan 禁止 feature 时返回中文说明；正式版或通过 plan_features_json 覆写放行时返回 None。"""
+    plan = get_plan(client_id)
+    if plan != "trial":
+        return None
+    ent = get_entitlement(client_id)
+    if ent and isinstance(ent.plan_features_json, dict) and ent.plan_features_json.get(feature):
+        return None
+    return _TRIAL_BLOCKS_FEATURES.get(feature)
+
+
+def check_plan_feature(client_id: str, feature: str) -> None:
+    """trial plan 禁止的 feature：抛 ApiError(403, code=PLAN_DENIED)；否则放行。"""
+    reason = plan_deny_reason(client_id, feature)
+    if reason:
+        raise ApiError(reason, http_status=403, code="PLAN_DENIED")

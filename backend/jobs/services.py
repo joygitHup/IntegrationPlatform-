@@ -60,6 +60,16 @@ def create_job(data: dict, created_by: str) -> IntegrationJob:
         raise ApiError("任务编码已存在", 400)
     owner_cid = data.get("client_id") or ""
     _assert_datasources_in_client(owner_cid, data.get("source_datasource_id") or "", data.get("target_datasource_id") or "")
+    # 试用版环境门禁：trial 只允许 dev
+    _env = (data.get("environment") or "dev").strip().lower()
+    if _env in ("prod", "production"):
+        from open_api.entitlements import check_plan_feature
+
+        check_plan_feature(owner_cid, "environment_prod")
+    elif _env in ("staging", "uat", "test"):
+        from open_api.entitlements import check_plan_feature
+
+        check_plan_feature(owner_cid, "environment_staging")
     # 集成任务数量门禁（0=不限）
     from open_api.entitlements import gate_resource
 
@@ -126,6 +136,15 @@ def update_job(job_id: str, data: dict) -> IntegrationJob | None:
     # 客户归属不允许通过编辑变更
     data.pop("client_id", None)
     owner_cid = job.client_id or ""
+    # 试用版环境门禁：若请求修改 environment 且目标非 dev，则拦截
+    if "environment" in data and data["environment"]:
+        _env = str(data["environment"]).strip().lower()
+        if _env in ("prod", "production"):
+            from open_api.entitlements import check_plan_feature
+            check_plan_feature(owner_cid, "environment_prod")
+        elif _env in ("staging", "uat", "test"):
+            from open_api.entitlements import check_plan_feature
+            check_plan_feature(owner_cid, "environment_staging")
     if owner_cid:
         _assert_datasources_in_client(
             owner_cid,

@@ -42,6 +42,18 @@ def create_app(data: dict, created_by: str) -> tuple[Application, str]:
     data = validate_app_payload(data, partial=False)
     if Application.objects.filter(code=data["code"]).exists():
         raise ApiError("应用编码已存在", 400)
+    client_id = data.get("client_id") or ""
+    # 试用版 SSO 登录方式门禁：trial 只开放 jwt
+    _lt = (data.get("login_type") or "jwt").strip().lower()
+    _lt_to_feature = {
+        "oauth2": "sso_oauth2",
+        "saml": "sso_saml",
+        "ticket": "sso_ticket",
+        "form_based": "sso_form_based",
+    }
+    if _lt in _lt_to_feature:
+        from open_api.entitlements import check_plan_feature
+        check_plan_feature(client_id, _lt_to_feature[_lt])
     secret = data.get("secret_key") or generate_app_secret()
     app = Application(
         name=data["name"],
@@ -92,6 +104,18 @@ def update_app(app_id: str, data: dict) -> Application | None:
     data = validate_app_payload(data, partial=True, existing=app)
     # 客户归属不允许通过编辑变更
     data.pop("client_id", None)
+    # 试用版 SSO login_type 门禁：如果请求改 login_type 且目标非 jwt
+    if "login_type" in data and data["login_type"]:
+        _lt = str(data["login_type"]).strip().lower()
+        _lt_to_feature = {
+            "oauth2": "sso_oauth2",
+            "saml": "sso_saml",
+            "ticket": "sso_ticket",
+            "form_based": "sso_form_based",
+        }
+        if _lt in _lt_to_feature:
+            from open_api.entitlements import check_plan_feature
+            check_plan_feature(app.client_id or "", _lt_to_feature[_lt])
     skip = {"id", "created_at", "created_by", "code", "secret_key", "client_id"}
     for key, value in data.items():
         if key in skip or not hasattr(app, key):

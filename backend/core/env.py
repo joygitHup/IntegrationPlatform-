@@ -30,7 +30,8 @@ def request_environment(request=None) -> str:
     try:
         query = (request.GET.get("env") or request.GET.get("environment") or "").strip().lower()
     except Exception:
-        pass
+        # request.GET 不可用，极端场景
+        query = ""
     value = header or query or default_environment()
     return value if value in VALID_ENVS else default_environment()
 
@@ -42,6 +43,7 @@ def query_environment(request=None) -> str:
     try:
         value = (request.GET.get("env") or request.GET.get("environment") or "").strip().lower()
     except Exception:
+        # request.GET 不可用
         return ""
     return value if value in VALID_ENVS else ""
 

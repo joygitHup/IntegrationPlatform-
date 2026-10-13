@@ -41,7 +41,7 @@
     { "@type": "Offer", "name": "专业版", "price": "298000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "集成任务不限量，DAG 编排，快照回滚，开放 API + 双 SDK，集成商运营模式，数据量不限", "availability": "https://schema.org/InStock" },
     { "@type": "Offer", "name": "旗舰版·私有化", "price": "600000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "源码级交付选项，信创适配，高可用架构，定制连接器 2 个/年，SLA 99.9%", "availability": "https://schema.org/InStock" }
   ],
-  "featureList": "26+ connectors, JWT SSO, Ticket SSO, OAuth2 PKCE, SAML 2.0, OIDC Discovery, DAG orchestration, dead letter queue, snapshot rollback, field-level audit, data masking, open API, Python SDK, TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, SaaS deployment, private deployment, Xinchuang compatibility",
+  "featureList": "26+ connectors, JWT SSO, Ticket SSO, OAuth2 PKCE, OAuth2 Refresh Token rotation, SAML 2.0 with XML-DSig, OIDC Discovery standard JSON, DAG orchestration, dead letter queue, snapshot rollback, field-level audit, data masking, payload auto-redaction, open API, Python SDK (check_revocation default on), TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, health endpoint, JSON structured logs, Docker Compose deployment, offline Ed25519 license signing, SaaS deployment, private deployment, Xinchuang compatibility",
   "softwareRequirements": "PostgreSQL 12+, Redis 6+ (production)",
   "operatingSystem": "Linux, Windows, Kylin OS"
 }
@@ -328,6 +328,13 @@
   table.cmp th:first-child { color: #fff; }
   table.cmp td.g { color: var(--green); font-weight: 700; }
   table.cmp td.x { color: var(--txt-3); opacity: .5; }
+  table.cmp td .tag-s {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    font-size: 10px; font-weight: 500; line-height: 16px;
+    color: var(--cyan); border: 1px solid rgba(78,205,196,.4);
+    border-radius: 10px; background: rgba(78,205,196,.08);
+    vertical-align: middle;
+  }
   table.cmp td { color: var(--txt-2); }
   table.cmp tr.group td {
     background: rgba(34,211,238,.06); color: var(--cyan);
@@ -493,10 +500,12 @@
         <ul>
           <li>五种模式：JWT / Ticket / OAuth2+PKCE / SAML 2.0 / 表单代填</li>
           <li>A → 中台 → B 换票免登（SSO Launch）</li>
+          <li>OAuth2 Refresh Token 轮换（旧 jti 自动黑名单防重放）</li>
           <li>SAML 强制 IdP 证书 + XML-DSig 签名校验</li>
-          <li>RS256 非对称签名 + JWKS 公钥分发</li>
+          <li>RS256 非对称签名 + JWKS 公钥分发（URL 化 issuer）</li>
           <li>会话列表 / 强制踢下线（jti 黑名单即时生效）</li>
-          <li>OIDC Discovery，兼容 next-auth 等标准库</li>
+          <li>OIDC Discovery 标准 JSON 字段，零配置兼容 next-auth / python-social-auth</li>
+          <li>B 系统 SDK 默认开启 check_revocation，踢下线 0 秒生效</li>
         </ul>
       </div>
       <div class="card cap">
@@ -515,11 +524,12 @@
         <h3>开放服务与 API 生态</h3>
         <p>把集成能力以标准 API 开放给集成商与上下游伙伴。</p>
         <ul>
-          <li>自助注册发 Key / 控制台签发</li>
+          <li>自助注册发 Key / 控制台签发（沙箱 Key 默认 1 万次调用）</li>
           <li>OpenAPI 规范文档 + 在线调试</li>
-          <li>Python / TypeScript 双 SDK，控制台一键构建下载</li>
-          <li>入站 Webhook、数据回执、幂等键防重</li>
-          <li>按集成商隔离资产与用量，配额超限自动拦截</li>
+          <li>Python / TypeScript 双 SDK，控制台一键构建下载 + 自动版本后缀</li>
+          <li>入站 Webhook、数据回执、幂等键防重、回执 payload 自动脱敏</li>
+          <li>按集成商隔离资产与用量，配额超限实时拦截 + 告警</li>
+          <li>离线 License 硬上限覆盖数据库配额，私有化无法绕过</li>
         </ul>
       </div>
       <div class="card cap">
@@ -530,7 +540,9 @@
           <li>执行记录：每步起止、行数、失败原因</li>
           <li>死信队列：重处理 / 忽略 / 改字段再落库</li>
           <li>版本快照回滚 + 字段级变更审计</li>
-          <li>仪表盘趋势 + Prometheus 指标</li>
+          <li>仪表盘趋势 + Prometheus 指标 + 健康检查端点（DB/Redis/Queue）</li>
+          <li>审计日志 180 天保留，JSON 结构化输出（ELK / Loki 友好）</li>
+          <li>调度器每 30 秒自动清理过期实体（OAuth/Ticket/会话/重置 token）</li>
         </ul>
       </div>
       <div class="card cap">
@@ -694,23 +706,30 @@
           <tr class="group"><td colspan="5">单点登录（SSO）</td></tr>
           <tr><td>JWT / Ticket 免登</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>OAuth2 + PKCE 授权服务器</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>OAuth2 Refresh Token 轮换（旧 jti 黑名单）</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>SAML 2.0（XML-DSig 校验）</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>OIDC Discovery / JWKS</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>会话管理 / 强制下线</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">数据治理与安全</td></tr>
-          <tr><td>字段级脱敏</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>字段级脱敏（多规则 + 智能识别）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>回执 / 告警 payload 自动脱敏</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>死信人工裁决</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>版本快照回滚</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>字段级变更审计</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>版本快照回滚</td><td class="x">—</td><td class="g">✓<span class="tag-s">部署配置</span></td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>字段级变更审计</td><td class="x">—</td><td class="g">✓<span class="tag-s">部署配置</span></td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>敏感配置 AES-256 加密</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">开放与生态</td></tr>
-          <tr><td>开放 API + API Key</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>Python / TypeScript SDK</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>开放 API + API Key</td><td class="x">—</td><td class="g">✓<span class="tag-s">部署配置</span></td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>Python / TypeScript SDK（check_revocation 默认开启）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>集成商运营模式（发 Key / 代配 / 计费）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>配额管理与用量统计</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">部署与服务</td></tr>
           <tr><td>环境隔离（dev/staging/prod）</td><td class="x">dev 单环境</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>Celery 生产队列集群</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>Docker Compose 一键部署（5 服务编排）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>健康检查端点（DB + Redis + Queue + Version）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>离线 License 签名（Ed25519 + min() 硬上限）</td><td class="x">—</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td></tr>
+          <tr><td>JSON 结构化日志（ELK / Loki 友好）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>数据库备份脚本（pg_dump + 14 天保留）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>信创适配（达梦 / 金仓 / 麒麟）</td><td class="x">—</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td></tr>
           <tr><td>SLA 与响应时效</td><td class="x">—</td><td>工作日 8h</td><td>7×24 · 8h 响应</td><td>99.9% · 4h 响应</td></tr>
         </tbody>
@@ -718,7 +737,7 @@
     </div>
 
     <div class="deploy-note">
-      <strong>交付注记</strong>：任务数、数据量等配额由平台实时拦截（超限自动拒绝并告警）；开放 API 自助注册、DAG 编排等能力差异通过部署配置与商务授权共同生效——标准版私有化交付时默认关闭开放 API 自助注册（<code>OPEN_REGISTER_ENABLED=false</code>），升级专业版后即刻开启，无需重新部署或迁移配置。
+      <strong>交付注记</strong>：① 试用版 <code>plan=trial</code> 默认自动开通、自注册 <code>expires_at=+30 天</code>，到期后 IntegrationClient 自动 <code>status=frozen</code>；试用版硬门控：只允许 dev 环境、SSO 仅开放 JWT（OAuth2 / SAML / Ticket / 表单代填均被拒绝）。正式客户升级：签合同后由平台管理员改 <code>plan</code> + 对应配额 + 清 expires_at。② 标准版 DAG 编排、版本快照、字段审计、开放 API 四项"部署配置开启"——代码层面全链路可用，交付时通过 <code>OPEN_REGISTER_ENABLED=false</code>、<code>enable_version_snapshot=false</code>、<code>ENTITLEMENT_VERSION_SNAPSHOT=false</code> 等环境变量默认关闭，升级专业版即开即用，无需重新部署。③ 私有化离线 License：用 <code>scripts/generate_license.py gen-keys</code> 生成 Ed25519 公私钥、<code>sign</code> 签发给客户，<code>min(DATABASE 配额, License 配额)</code> 硬夹逼；私有化部署还带 Docker Compose 5 服务、<code>GET /api/open/health</code> 健康四探针、JSON 结构化日志、pg_dump 备份脚本。④ OAuth2 Refresh Token 轮换：旧 jti 自动黑名单防重放；payload 自动脱敏递归清除 password/secret/api_key/token。⑤ 所有版本（含试用）默认支持字段级脱敏与 AES-256 敏感字段加密——这是安全机制，不限制版本。
     </div>
   </div>
 </section>
@@ -784,6 +803,11 @@
         <h4>🏛️ 私有化部署（Private 模式）</h4>
         <ul>
           <li>部署在客户机房 / 专有云，数据不出域</li>
+          <li>Docker Compose 一键部署（Postgres + Redis + API + Celery + 控制台 5 服务编排）</li>
+          <li><strong>离线 License 签名</strong>（Ed25519 公私钥签发），硬上限 min() 夹逼数据库配额，私有化无法绕过</li>
+          <li>健康检查端点 <code>GET /api/open/health</code>（DB / Redis / Queue / Version 四探针，K8s 探针友好）</li>
+          <li>JSON 结构化日志（生产态 ELK / Loki 友好，DEBUG 自动切换人眼可读）</li>
+          <li>PostgreSQL 备份脚本（pg_dump + 14 天 retention）</li>
           <li>配额放行 + 告警模式，业务不中断</li>
           <li>PostgreSQL + Celery / Redis 生产架构</li>
           <li>支持国产数据库与操作系统（信创）</li>

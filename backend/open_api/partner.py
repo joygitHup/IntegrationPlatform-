@@ -15,6 +15,7 @@ def request_workspace_id(request) -> str:
     try:
         query = (request.GET.get("workspaceId") or request.GET.get("workspace_id") or "").strip()
     except Exception:
+        # request.GET 不可用，极端场景（比如 SSO callback 是 POST）
         pass
     body = ""
     data = getattr(request, "data", None)

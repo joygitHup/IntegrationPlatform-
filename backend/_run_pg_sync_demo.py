@@ -18,7 +18,7 @@ from psycopg.rows import dict_row
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
-API = "http://127.0.0.1:8000/api"
+API = os.getenv("PLATFORM_API", "http://127.0.0.1:8000/api")
 CONTAINER = "ip_pg_target"
 SRC_DB = "ip_demo_src"
 TGT_DB = "ip_target"

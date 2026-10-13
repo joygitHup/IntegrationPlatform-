@@ -9,10 +9,13 @@ from __future__ import annotations
 import os
 import time
 import uuid
+import logging
 from collections import defaultdict, deque
 from threading import Lock
 
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 # ----- 内存后端（默认 / 兜底）-----
 _lock = Lock()
@@ -70,6 +73,7 @@ def _get_redis():
         client.ping()  # 触发一次连接验证
     except Exception:
         _redis_failed_at = time.time()
+        logger.warning("Redis 限流后端不可用，自动回退内存窗口")
         return None
     _redis_client = client
     return _redis_client

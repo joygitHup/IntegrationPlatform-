@@ -5,3 +5,7 @@ data/
 .env
 staticfiles/
 .pytest_cache/
+
+# License 密钥与部署文件
+config/private_key.pem
+config/public_key.pem

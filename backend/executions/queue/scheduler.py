@@ -39,12 +39,38 @@ def _tick() -> None:
     if not _acquire_lease("cron-scan", ttl_seconds=25):
         return
 
-    # 清理已过期的 JWT 吊销记录
+    # 1) 清理已过期的 JWT 吊销记录
     try:
         from core.jwt import purge_revoked_tokens
         purge_revoked_tokens()
     except Exception:
         logger.debug("清理过期吊销记录失败", exc_info=True)
+
+    # 2) 清理 SSO / OAuth / Ticket 临时实体（过期即删，只保留有效会话）
+    try:
+        from django.utils import timezone as _tz
+        from sso.models import OAuthState, OAuthAuthorizationCode, SsoSession, SsoTicket
+
+        now = _tz.now()
+        OAuthState.objects.filter(expires_at__lt=now).delete()
+        OAuthAuthorizationCode.objects.filter(expires_at__lt=now).delete()
+        SsoTicket.objects.filter(expires_at__lt=now).delete()
+        # 超过 expires_at 的会话（自然过期）直接清；revoked 状态保留审计痕迹 30 天
+        SsoSession.objects.filter(expires_at__lt=now, status="active").delete()
+        SsoSession.objects.filter(
+            status="revoked",
+            revoked_at__lt=now - timezone.timedelta(days=30),
+        ).delete()
+    except Exception:
+        logger.debug("清理 SSO 临时实体失败", exc_info=True)
+
+    # 3) 清理密码重置 token
+    try:
+        from iam.models import PasswordResetToken
+
+        PasswordResetToken.objects.filter(expires_at__lt=timezone.now()).delete()
+    except Exception:
+        logger.debug("清理密码重置 token 失败", exc_info=True)
 
     jobs = IntegrationJob.objects.filter(status="running", schedule_type="cron")
     for job in jobs:
@@ -60,6 +86,32 @@ def _tick() -> None:
             continue
         enqueue_execution(job, trigger_type="schedule")
     purge_expired_snapshots()
+    _freeze_expired_trials()
+
+
+def _freeze_expired_trials() -> None:
+    """plan=trial 且 expires_at 已过的 IntegrationClient → status='frozen'。"""
+    from django.utils import timezone
+
+    now = timezone.now()
+    try:
+        from open_api.models import ClientEntitlement, IntegrationClient
+
+        expired_ent_ids = list(
+            ClientEntitlement.objects.filter(
+                plan="trial", expires_at__isnull=False, expires_at__lt=now
+            ).values_list("client_id", flat=True)
+        )
+        if not expired_ent_ids:
+            return
+        n = IntegrationClient.objects.filter(id__in=expired_ent_ids, status="active").update(status="frozen")
+        if n:
+            import logging
+
+            logging.getLogger(__name__).info("已冻结 %d 个过期试用版 client", n)
+    except Exception:
+        # 任何异常不影响调度主循环
+        pass
 
 
 def _cron_due(expr: str) -> bool:

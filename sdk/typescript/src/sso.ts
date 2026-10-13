@@ -188,7 +188,7 @@ export async function handleCallback(params: CallbackParams): Promise<CallbackRe
   }
   return {
     userInfo,
-    redirectUrl: params.redirect || config.defaultRedirect,
+    redirectUrl: params.redirect || config.defaultRedirect || '/dashboard',
   };
 }
 

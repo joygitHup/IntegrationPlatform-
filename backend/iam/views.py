@@ -235,7 +235,8 @@ def _try_send_reset_email(user, token: str) -> bool:
                 smtp.login(user_smtp, pwd)
             smtp.send_message(msg)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.exception("发送密码重置邮件失败 user=%s: %s", user.get("username"), exc)
         return False
 
 

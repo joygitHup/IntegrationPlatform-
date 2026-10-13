@@ -22,8 +22,9 @@ _config = {
     "auto_create_user": False,
     "local_session_key": "user_id",
     "default_redirect": "/dashboard",
-    # 本地验签成功后是否再回调中台确认未被踢下线（默认关，敏感系统可开）
-    "check_revocation": False,
+    # 本地验签成功后是否再回调中台确认未被踢下线（默认 True：
+    # 中台有 session 吊销即时生效机制，默认开启避免集成商拿到过期本地 session）
+    "check_revocation": True,
     # 中台签发者；留空时同时接受 URL 形式与历史 "integration-platform"
     "issuer": "",
 }

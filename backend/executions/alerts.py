@@ -3,12 +3,42 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import smtplib
 from email.message import EmailMessage
 
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_sensitive(obj) -> str:
+    """递归清除 payload 里的敏感字段，防密码/密钥泄露到邮件/Webhook。"""
+    sensitive_keys = {
+        "password", "secret", "api_key", "apiKey", "token", "access_token", "refresh_token",
+        "authorization", "private_key", "privateKey", "client_secret", "clientSecret",
+    }
+
+    def _walk(o):
+        if isinstance(o, dict):
+            return {
+                (k if k not in sensitive_keys else "***"): _walk("***")
+                if k in sensitive_keys
+                else _walk(v)
+                for k, v in o.items()
+            }
+        if isinstance(o, list):
+            return [_walk(x) for x in o]
+        if isinstance(o, str) and len(o) > 200:
+            return o[:200] + "…"
+        return o
+
+    try:
+        redacted = _walk(obj)
+        return json.dumps(redacted, ensure_ascii=False, default=str)
+    except Exception:
+        # 无论如可失败都别打断告警主流程，也别把原始 payload 漏出去
+        return json.dumps({"note": "<payload redacted due to serialization failure>"})
 
 
 def _alert_targets(job) -> tuple[str, str]:
@@ -32,12 +62,13 @@ def notify_failure_alert(job, payload: dict) -> None:
     email, hook = _alert_targets(job)
     if not email and not hook:
         return
+    redacted_payload_text = _redact_sensitive(payload)
     body = {
         "event": "job.failed",
         "jobId": job.id,
         "jobCode": job.code,
         "jobName": job.name,
-        **payload,
+        "status": status,
     }
     if hook:
         try:
@@ -50,7 +81,9 @@ def notify_failure_alert(job, payload: dict) -> None:
         except Exception:
             logger.exception("失败告警 Webhook 发送失败 job=%s", job.code)
     if email:
-        _send_mail(email, f"[集成中台] 任务失败 {job.name}", json.dumps(body, ensure_ascii=False, indent=2, default=str))
+        subject = f"[集成中台] 任务失败 {job.name}"
+        text = json.dumps(body, ensure_ascii=False, indent=2, default=str) + "\n\n原始 payload（已脱敏）:\n" + redacted_payload_text
+        _send_mail(email, subject, text)
 
 
 def _send_mail(to_addr: str, subject: str, text: str) -> None:

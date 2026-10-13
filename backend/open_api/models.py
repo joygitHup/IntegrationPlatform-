@@ -79,7 +79,21 @@ class ClientEntitlement(StringIdModel):
     """集成商授权（配额）。所有上限 0 = 不限；私有化无记录时按全 0 处理，开箱即用。"""
     ID_PREFIX = "ent"
 
+    PLAN_TRIAL = "trial"
+    PLAN_STANDARD = "standard"
+    PLAN_PROFESSIONAL = "professional"
+    PLAN_ENTERPRISE = "enterprise"
+    PLAN_CHOICES = (
+        (PLAN_TRIAL, "试用版"),
+        (PLAN_STANDARD, "标准版"),
+        (PLAN_PROFESSIONAL, "专业版"),
+        (PLAN_ENTERPRISE, "旗舰私有化"),
+    )
+
     client_id = models.CharField(max_length=32, unique=True, db_index=True)
+    plan = models.CharField(max_length=16, default=PLAN_STANDARD, choices=PLAN_CHOICES)
+    expires_at = models.DateTimeField(null=True, blank=True, help_text="试用版到期时间（到期自动冻结）")
+    plan_features_json = models.JSONField(default=dict, blank=True, help_text="显式覆写 feature gate")
     max_jobs = models.IntegerField(default=0)            # 集成任务数上限
     max_seats = models.IntegerField(default=0)           # 席位（启用账号数）上限
     max_connectors = models.IntegerField(default=0)      # 数据源/连接器登记数上限

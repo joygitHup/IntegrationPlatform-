@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: integration
+      POSTGRES_USER: integration
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-integration}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U integration"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    command: >
+      bash -c "
+        python manage.py migrate --noinput
+        && python manage.py collectstatic --noinput
+        && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4"
+    environment:
+      DATABASE_URL: postgres://integration:${PG_PASSWORD:-integration}@postgres:5432/integration
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-please-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-please-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-please-change-me-in-production}
+      DEPLOYMENT_MODE: private
+      PUBLIC_BASE_URL: http://localhost:8000
+      DJANGO_DEBUG: "false"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8000:8000"]
+    volumes:
+      - ./backend:/app
+      - ./license.json:/app/license.json:ro
+    restart: unless-stopped
+
+  celery:
+    build: ./backend
+    command: celery -A executions.queue.celery_app worker -l info --pool=solo
+    environment:
+      DATABASE_URL: postgres://integration:${PG_PASSWORD:-integration}@postgres:5432/integration
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-please-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-please-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-please-change-me-in-production}
+      DEPLOYMENT_MODE: private
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile.console
+    environment:
+      NEXT_PUBLIC_API_BASE: http://api:8000/api
+      PORT: "3000"
+    depends_on: { api: { condition: service_started } }
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

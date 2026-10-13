@@ -81,13 +81,21 @@ def verify_token(token: str) -> dict[str, Any] | None:
 
 
 def _is_revoked(jti: str) -> bool:
-    """检查 jti 是否在吊销黑名单中。"""
+    """检查 jti 是否在吊销黑名单中。
+
+    认证路径不允许静默降级：数据库异常直接抛，让上层记录并告警。
+    黑名单只阻断已明确吊销的令牌；数据库不可用属于基础设施故障，
+    应触发监控而非悄悄放过。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         from iam.models import RevokedToken
         return RevokedToken.objects.filter(jti=jti).exists()
     except Exception:
-        # 表未建或数据库不可用时不阻断认证（失败开放）
-        return False
+        logger.exception("吊销黑名单查询异常 jti=%s", jti)
+        raise
 
 
 def revoke_token(token: str) -> bool:
