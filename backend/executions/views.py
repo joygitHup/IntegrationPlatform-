@@ -6,10 +6,12 @@ from audit.services import audit_from_request
 from core.exceptions import ApiError
 from core.permissions import HasPermission, IsAuthenticated
 from core.query import q, q_int
-from core.tenancy import get_owned, scope_qs
+from core.tenancy import get_owned, principal_client_id, scope_qs
 from executions.models import DataVersionSnapshot, DeadLetterMessage, FieldChangeAudit, JobExecution
 from executions.serializers import FieldAuditSerializer
 from executions.services import (
+    bulk_resolve_dead_letters,
+    bulk_select_dead_letters,
     dead_letter_summary,
     execute_snapshot_rollback,
     execution_summary,
@@ -104,41 +106,54 @@ class DeadLetterView(APIView):
         })
 
     def post(self, request):
-        ids = request.data.get("ids") or []
         action = request.data.get("action")
-        if not ids:
-            raise ApiError("缺少 ids 参数", 400)
         if action not in ("reprocess", "ignore", "resolve"):
             raise ApiError("action 只能是 reprocess、ignore 或 resolve", 400)
-        results = []
-        payload = request.data.get("payload")
-        winner = request.data.get("winner") or "source"
-        execute = request.data.get("execute") is not False
+
+        # 两种选 id 方式：显式 ids 数组 或 按 filter 筛选
+        ids: list[str] = list(request.data.get("ids") or [])
+        if not ids:
+            filt = request.data.get("filter") or {}
+            if isinstance(filt, dict):
+                ids = bulk_select_dead_letters(
+                    job_id=filt.get("jobId") or filt.get("job_id"),
+                    status=filt.get("status"),
+                    error_type=filt.get("errorType") or filt.get("error_type"),
+                    workspace_id=request_workspace_id(request),
+                    client_id=principal_client_id(request),
+                )
+        if not ids:
+            raise ApiError("缺少 ids 或 filter 参数", 400)
+
+        # 逐条归属校验：他客死信跳过不处理，避免跨客裁决
+        owned_ids: list[str] = []
         for item_id in ids:
             try:
-                # 逐条归属校验：他客死信按不存在处理，不影响同批其他条目
                 get_owned(DeadLetterMessage, item_id, request, not_found="死信消息不存在")
-                extra = {}
-                if action == "reprocess":
-                    reprocess_dead_letter(item_id, request.auth_ctx.user_id)
-                elif action == "resolve":
-                    extra = resolve_dead_letter(
-                        item_id,
-                        processed_by=request.auth_ctx.user_id,
-                        payload=payload if isinstance(payload, dict) else None,
-                        winner=winner,
-                        execute=execute,
-                    )
-                else:
-                    ignore_dead_letter(item_id, request.auth_ctx.user_id)
-                results.append({"id": item_id, "success": True, **extra})
-            except Exception as exc:
-                results.append({"id": item_id, "success": False, "error": str(exc)})
+                owned_ids.append(item_id)
+            except Exception:
+                pass
+        if not owned_ids:
+            raise ApiError("无可用的死信条目（全部不属于当前客户）", 404)
+
+        payloads = request.data.get("payloads")
+        default_payload = request.data.get("payload")
+        winner = request.data.get("winner") or "source"
+        execute = request.data.get("execute") is not False
+        results = bulk_resolve_dead_letters(
+            ids=owned_ids,
+            action=action,
+            processed_by=request.auth_ctx.user_id,
+            payloads=payloads if isinstance(payloads, dict) else None,
+            default_payload=default_payload if isinstance(default_payload, dict) else None,
+            winner=winner,
+            execute=execute,
+        )
         audit_from_request(
             request, action="UPDATE", resource_type="JOB",
-            resource_id=",".join(ids), detail={"action": action, "count": len(ids)},
+            resource_id=",".join(owned_ids), detail={"action": action, "count": len(owned_ids)},
         )
-        return Response({"results": results, "total": len(ids)})
+        return Response({"results": results, "total": len(owned_ids)})
 
 
 class FieldAuditView(APIView):
@@ -304,3 +319,27 @@ class WorkflowRunView(APIView):
             } for r in items],
             "total": total, "page": page, "pageSize": page_size,
         })
+
+    def post(self, request):
+        """DAG step 级重跑：POST /api/workflows { id, stepId } 从指定 step 起续跑，
+        前面 success step 跳过，目标 + 后继重置为 pending 再入队。"""
+        run_id = request.data.get("id") or request.data.get("workflowRunId")
+        step_id = request.data.get("stepId") or request.data.get("step_id")
+        if not run_id or not step_id:
+            raise ApiError("缺少 id 和 stepId", 400)
+        from executions.models import WorkflowRun
+
+        run = get_owned(WorkflowRun, run_id, request, not_found="编排运行不存在")
+        from core.permissions import has_permission
+
+        auth = getattr(request, "auth_ctx", None)
+        if not has_permission(auth, "execution:execute"):
+            raise ApiError("缺少 execution:execute 权限", 403)
+        from executions.dag import retry_step
+
+        result = retry_step(run.id, str(step_id), triggered_by=getattr(request.auth_ctx, "user_id", "") or "")
+        audit_from_request(
+            request, action="UPDATE", resource_type="WORKFLOW",
+            resource_id=run.id, detail={"action": "retry_step", "stepId": step_id},
+        )
+        return Response(result)

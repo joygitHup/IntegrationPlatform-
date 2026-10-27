@@ -16,8 +16,8 @@ import { toast } from 'sonner';
 export default function LoginPage() {
   const { login, user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -135,11 +135,6 @@ export default function LoginPage() {
                 )}
               </Button>
             </form>
-
-            <div className="mt-4 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-              <p className="font-medium text-foreground">默认账号：</p>
-              <p>管理员：admin / admin123</p>
-            </div>
           </CardContent>
         </Card>
       </div>

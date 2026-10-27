@@ -1,8 +1,12 @@
 """执行记录与死信队列服务。"""
 from __future__ import annotations
 
+import logging
+
 from django.db.models import Count, Q
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from core.exceptions import ApiError
 from executions.models import DeadLetterMessage, JobExecution
@@ -374,8 +378,22 @@ def resolve_dead_letter(
         row = dict(incoming)
     if not row:
         raise ApiError("没有可写入的记录", 400)
+    # 不管 execute 与否，都做掩码剥离检查（预览时也要告诉客户哪些字段仍带 ***）
+    masked_fields = resolve_sensitive_fields({**(existing or {}), **row}, job.sensitive_fields)
+    dropped = [
+        f for f in masked_fields
+        if isinstance(row.get(f), str) and "***" in row[f]
+    ]
     if not execute:
-        return {"payload": row, "target": existing, "winner": winner}
+        # 预览模式：剥离掩码字段但不真落库，返回预览结果
+        clean_row = {k: v for k, v in row.items() if k not in dropped}
+        return {
+            "payload": clean_row if dropped else row,
+            "target": existing,
+            "winner": winner,
+            "droppedMaskedFields": dropped,
+            "wouldDrop": bool(dropped),
+        }
     from datasources.models import Datasource
     from datasources.services import decrypt_config
     from datasources.connectors.runtime import load_record
@@ -392,6 +410,12 @@ def resolve_dead_letter(
 
         gate_rows(owner_cid, 1)
     operation = "update" if existing is not None else "create"
+    # 掩码字段已提前算好（preview/execute 共用），execute=True 时直接剥离
+    if dropped:
+        row = {k: v for k, v in row.items() if k not in dropped}
+        logger.info("死信裁决剥离掩码字段 %s（任务 %s），保留目标端原值", dropped, job.id)
+    if not row:
+        raise ApiError("裁决后的记录只包含掩码字段，请在编辑时填入真实值", 400)
     load_record(target.type, cfg, _job_io(job, "target"), row, operation=operation, match_keys=match_keys)
     dl.status = "resolved"
     dl.processed_at = timezone.now()
@@ -401,7 +425,7 @@ def resolve_dead_letter(
         from open_api.usage import bump
 
         bump(owner_cid, rows_written=1)
-    return {"written": True, "operation": operation, "winner": winner, "payload": row}
+    return {"written": True, "operation": operation, "winner": winner, "payload": row, "droppedMaskedFields": dropped}
 
 
 def ignore_dead_letter(dlq_id: str, processed_by: str) -> None:
@@ -412,6 +436,78 @@ def ignore_dead_letter(dlq_id: str, processed_by: str) -> None:
     dl.processed_at = timezone.now()
     dl.processed_by = processed_by
     dl.save()
+
+
+def bulk_resolve_dead_letters(
+    *,
+    ids: list[str],
+    action: str,
+    processed_by: str,
+    payloads: dict | None = None,
+    default_payload: dict | None = None,
+    winner: str = "source",
+    execute: bool = True,
+) -> list[dict]:
+    """批量裁决死信（reprocess / ignore / resolve）。
+
+    payloads: { dlq_id: payload_dict } 映射，用于 resolve 时逐条不同字段；
+    default_payload: 当 payloads 没命中某 id 时回退用的公共 payload。
+    不执行 ETL（execute=False）时跳过掩码剥离和落库，只返回 preview 结果。
+    """
+    results: list[dict] = []
+    for item_id in ids:
+        try:
+            extra: dict = {}
+            if action == "reprocess":
+                reprocess_dead_letter(item_id, processed_by)
+            elif action == "ignore":
+                ignore_dead_letter(item_id, processed_by)
+            elif action == "resolve":
+                payload = (payloads or {}).get(item_id) or default_payload
+                extra = resolve_dead_letter(
+                    item_id,
+                    processed_by=processed_by,
+                    payload=payload if isinstance(payload, dict) else None,
+                    winner=winner,
+                    execute=execute,
+                )
+            results.append({"id": item_id, "success": True, **extra})
+        except Exception as exc:
+            logger.warning("批量裁决死信失败 id=%s action=%s err=%s", item_id, action, exc)
+            results.append({"id": item_id, "success": False, "error": str(exc)})
+    return results
+
+
+def bulk_select_dead_letters(
+    *,
+    job_id: str | None = None,
+    status: str | None = None,
+    error_type: str | None = None,
+    workspace_id: str | None = None,
+    client_id: str | None = None,
+) -> list[str]:
+    """按筛选条件选一批死信 id，配合 bulk_resolve_dead_letters 使用。
+
+    workspace_id/client_id 任一给了就严格按任务归属过滤，防止跨客误选。
+    """
+    qs = DeadLetterMessage.objects.all().order_by("-created_at")
+    if job_id:
+        qs = qs.filter(job_id=job_id)
+    if status:
+        qs = qs.filter(status=status)
+    if error_type:
+        qs = qs.filter(error_type=error_type)
+    if workspace_id:
+        from open_api.tenancy import workspace_job_ids
+
+        job_ids = workspace_job_ids(workspace_id)
+        if job_ids:
+            qs = qs.filter(job_id__in=job_ids)
+        else:
+            return []  # workspace 无 job → 安全返回空
+    if client_id:
+        qs = qs.filter(job__client_id=client_id)
+    return list(qs.values_list("id", flat=True))
 
 
 def finish_dead_letter_retry(dlq_id: str, *, success: bool) -> None:

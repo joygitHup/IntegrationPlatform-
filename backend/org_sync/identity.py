@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -58,7 +61,8 @@ def _norm_dept(item: dict, *, source: str) -> dict:
     }
 
 
-def pull_dingtalk(config: dict) -> dict:
+def dingtalk_token(config: dict) -> str:
+    """公开：钉钉 access_token，供 ETL 写入（load_identity）和调度器复用。"""
     app_key = config.get("appKey") or config.get("app_key")
     app_secret = config.get("appSecret") or config.get("app_secret")
     if not app_key or not app_secret:
@@ -69,13 +73,63 @@ def pull_dingtalk(config: dict) -> dict:
     token = token_data.get("access_token")
     if not token:
         raise IdentityError(token_data.get("errmsg") or "钉钉获取 token 失败")
+    return str(token)
+
+
+def wecom_token(config: dict) -> str:
+    """公开：企微 access_token，供 ETL 写入和调度器复用。"""
+    corp_id = config.get("corpId") or config.get("corpid")
+    secret = config.get("secret")
+    if not corp_id or not secret:
+        raise IdentityError("企微缺少 CorpId / Secret")
+    token_data = _http_json(
+        "https://qyapi.weixin.qq.com/cgi-bin/gettoken?" + urlencode({"corpid": corp_id, "corpsecret": secret})
+    )
+    token = token_data.get("access_token")
+    if not token:
+        raise IdentityError(token_data.get("errmsg") or "企微获取 token 失败")
+    return str(token)
+
+
+def pull_dingtalk(config: dict) -> dict:
+    token = dingtalk_token(config)
     dept_data = _http_json("https://oapi.dingtalk.com/department/list?" + urlencode({"access_token": token}))
     if dept_data.get("errcode") not in (0, None):
         raise IdentityError(dept_data.get("errmsg") or "钉钉部门拉取失败")
     departments = [_norm_dept(d, source="dingtalk") for d in (dept_data.get("department") or [])]
-    users = []
+    # P1-1 优化：钉钉 v2 API 支持不传 dept_id 全量拉（size=100，offset 分页），
+    # 旧版按部门串行拉在部门数多时触发 429 限流且耗时 O(N_dept * N_user_per_dept)。
+    # fallback：如果 v2 接口不支持（老企业），再回退按部门逐拉。
+    users: list[dict] = []
+    try:
+        offset = 0
+        v2_ok = True
+        page_count = 0
+        while True:
+            page = _http_json(
+                "https://oapi.dingtalk.com/topapi/v2/user/list?"
+                + urlencode({"access_token": token, "offset": offset, "size": 100})
+            )
+            if page.get("errcode") not in (0, None):
+                v2_ok = False
+                break
+            result = page.get("result") or {}
+            batch = result.get("list") or []
+            users.extend(_norm_user(u, source="dingtalk") for u in batch)
+            page_count += 1
+            logger.info("钉钉 v2 全量拉取进度 page=%d batch=%d total=%d", page_count, len(batch), len(users))
+            if not result.get("has_more"):
+                break
+            offset += 100
+        if v2_ok and users:
+            logger.info("钉钉 v2 拉取完成，总计 %d 用户 / %d 部门，用时 %d 页",
+                        len(users), len(departments), page_count)
+            return {"source": "dingtalk", "users": _dedupe_users(users), "departments": departments}
+    except Exception:
+        logger.info("钉钉 v2 拉取不可用，回退按部门逐拉")
+    # fallback：按部门逐拉（老企业 / v2 权限未开）
     dept_ids = [d["sourceId"] for d in departments] or ["1"]
-    for dept_id in dept_ids:
+    for idx, dept_id in enumerate(dept_ids, 1):
         offset = 0
         while True:
             page = _http_json(
@@ -89,6 +143,9 @@ def pull_dingtalk(config: dict) -> dict:
             if not page.get("hasMore"):
                 break
             offset += 100
+        if idx % 50 == 0:
+            logger.info("钉钉 fallback 拉取进度 dept=%d/%d users=%d", idx, len(dept_ids), len(users))
+    logger.info("钉钉 fallback 拉取完成，总计 %d 用户 / %d 部门", len(users), len(departments))
     return {"source": "dingtalk", "users": _dedupe_users(users), "departments": departments}
 
 

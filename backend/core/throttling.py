@@ -141,3 +141,17 @@ def check_client_rate_limit(client_id: str, limit: int, *, consume: bool = True)
         return True, 0
     window = getattr(settings, "CLIENT_RATE_WINDOW_SECONDS", 60)
     return _throttle(f"client:{client_id}", int(limit), window, consume=consume)
+
+
+def check_public_rate_limit(
+    ip: str,
+    bucket: str = "public",
+    *,
+    limit: int = 120,
+    window: int = 60,
+    consume: bool = True,
+) -> tuple[bool, int]:
+    """匿名公开端点（SLA 状态页 / 嵌入页）的按 IP 限流。limit<=0 表示不限制。"""
+    if int(limit or 0) <= 0:
+        return True, 0
+    return _throttle(f"{bucket}:{ip or 'unknown'}", int(limit), int(window), consume=consume)

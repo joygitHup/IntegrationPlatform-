@@ -81,6 +81,8 @@ export interface JobForm {
   matchKeys: string;
   conflictStrategy: string;
   conflictCompareField: string;
+  softDeleteField: string;
+  softDeleteValue: string;
   sensitiveFields: string;
   desensitizeMode: string;
   enableChangeAudit: boolean;
@@ -120,6 +122,8 @@ export const emptyJobForm: JobForm = {
   matchKeys: '',
   conflictStrategy: 'source_wins',
   conflictCompareField: '',
+  softDeleteField: '',
+  softDeleteValue: '',
   sensitiveFields: '',
   desensitizeMode: 'mask',
   enableChangeAudit: false,
@@ -204,6 +208,8 @@ export function formFromJobDetail(detail: any): JobForm {
     matchKeys: Array.isArray(detail?.matchKeys) ? detail.matchKeys.join(',') : (detail?.matchKeys || ''),
     conflictStrategy: detail?.conflictStrategy || 'source_wins',
     conflictCompareField: detail?.conflictCompareField || '',
+    softDeleteField: detail?.softDeleteField || '',
+    softDeleteValue: detail?.softDeleteValue || '',
     sensitiveFields: Array.isArray(detail?.sensitiveFields) ? detail.sensitiveFields.join(',') : (detail?.sensitiveFields || ''),
     desensitizeMode: detail?.desensitizeMode || 'mask',
     enableChangeAudit: Boolean(detail?.enableChangeAudit),
@@ -297,6 +303,12 @@ export function buildJobPayload(form: JobForm): Record<string, unknown> {
     matchKeys: form.matchKeys.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean),
     conflictStrategy: form.conflictStrategy || 'source_wins',
     conflictCompareField: form.conflictCompareField.trim(),
+    softDeleteField: form.softDeleteField.trim(),
+    softDeleteValue: form.softDeleteValue.trim(),
+    // P2-8：两个字段必须同时填或同时空，避免"只填一个触发不了 delete"的静默错误
+    ...((form.softDeleteField.trim() && !form.softDeleteValue.trim()) || (!form.softDeleteField.trim() && form.softDeleteValue.trim())
+      ? { __softDeletePartial: true }
+      : {}),
     sensitiveFields: form.sensitiveFields.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean),
     desensitizeMode: form.desensitizeMode || 'mask',
     templateType: form.templateType || '',

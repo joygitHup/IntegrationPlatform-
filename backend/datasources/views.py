@@ -89,6 +89,18 @@ class DatasourceDetailView(APIView):
 
     def delete(self, request, id: str):
         ds = get_owned(Datasource, id, request, not_found="数据源不存在")
+        from django.db.models import Q
+        from jobs.models import IntegrationJob
+
+        ref_names = list(
+            IntegrationJob.objects.filter(
+                Q(source_datasource_id=id) | Q(target_datasource_id=id)
+            ).values_list("name", flat=True)
+        )
+        if ref_names:
+            shown = "、".join(ref_names[:5])
+            more = f" 等 {len(ref_names)} 个" if len(ref_names) > 5 else ""
+            raise ApiError(f"数据源仍被{more}任务引用：{shown}，请先删除或改绑这些任务", 400)
         ds.delete()
         audit_from_request(
             request, action="DELETE", resource_type="DATASOURCE",

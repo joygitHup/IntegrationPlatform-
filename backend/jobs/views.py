@@ -11,7 +11,7 @@ from core.tenancy import get_owned, principal_client_id
 from executions.services import enqueue_execution
 from jobs.models import IntegrationJob
 from jobs.serializers import CreateJobSerializer, JobSerializer, UpdateJobSerializer
-from jobs.services import create_job, list_jobs, set_job_status, update_job
+from jobs.services import create_job, list_jobs, reset_job_watermark, set_job_status, update_job
 from open_api.partner import apply_create_context
 
 
@@ -148,3 +148,32 @@ class JobPreviewView(APIView):
             filter_condition=request.data.get("filterCondition") or request.data.get("filter_condition") or "",
             limit=int(request.data.get("limit") or 20),
         ))
+
+
+class JobResetWatermarkView(APIView):
+    """手动设置 / 清空水位线。
+
+    POST /api/jobs/<id>/reset-watermark  {"watermarkValue": "2025-10-20 00:00:00"}
+    watermarkValue 为空或不传时 → 清空（下次跑等价全量）
+    """
+
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permission = "job:write"
+
+    def post(self, request, id: str):
+        get_owned(IntegrationJob, id, request, not_found="任务不存在")
+        # CamelCaseJSONParser 已把 camelCase 转成 snake_case，需读 watermark_value
+        data = request.data if isinstance(request.data, dict) else {}
+        new_value = data.get("watermark_value")
+        if new_value is None:
+            new_value = data.get("watermarkValue")
+        job = reset_job_watermark(id, new_value=new_value)
+        audit_from_request(
+            request, action="UPDATE", resource_type="JOB",
+            resource_id=id, resource_name=job.name,
+            detail={
+                "field": "watermarkValue",
+                "newValue": job.watermark_value or "(cleared)",
+            },
+        )
+        return Response(JobSerializer(job).data)

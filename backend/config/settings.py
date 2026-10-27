@@ -214,6 +214,8 @@ SSO_RSA_PRIVATE_KEY = _env("SSO_RSA_PRIVATE_KEY", "")
 SSO_RSA_PUBLIC_KEY = _env("SSO_RSA_PUBLIC_KEY", "")
 QUEUE_BACKEND = _env("QUEUE_BACKEND", "memory")
 REDIS_URL = _env("REDIS_URL", "")
+# /api/metrics 访问令牌：生产必须配置，配置后要求 Bearer 或 ?token=；留空（开发态）匿名可访问。
+METRICS_TOKEN = _env("METRICS_TOKEN", "")
 # 部署模式：private=私有化（配额超限仅告警，不拦截）；saas=SaaS（超限拒绝）。
 # 客户数据隔离（client_id）在两种模式下都强制生效。
 DEPLOYMENT_MODE = (_env("DEPLOYMENT_MODE", "private") or "private").strip().lower()
@@ -271,6 +273,7 @@ OPEN_REGISTER_ENABLED = (_env("OPEN_REGISTER_ENABLED", "true") or "true").lower(
 OPEN_REGISTER_INVITE = _env("OPEN_REGISTER_INVITE", "") or ""
 OPEN_SANDBOX_CALL_QUOTA = int(_env("OPEN_SANDBOX_CALL_QUOTA", "10000") or "10000")
 OPEN_SANDBOX_ROW_QUOTA = int(_env("OPEN_SANDBOX_ROW_QUOTA", "100000") or "100000")
+OPEN_SANDBOX_JOB_QUOTA = int(_env("OPEN_SANDBOX_JOB_QUOTA", "3") or "3")
 
 SMTP_HOST = _env("SMTP_HOST", "") or ""
 SMTP_PORT = int(_env("SMTP_PORT", "587") or "587")

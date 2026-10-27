@@ -69,7 +69,8 @@ def mongo_extract(config: dict, job_cfg: dict) -> list[dict]:
         field = (job_cfg.get("watermark_field") or "").strip()
         value = job_cfg.get("watermark_value") or ""
         if job_cfg.get("sync_mode") == "incremental" and field and value not in (None, ""):
-            query[field] = {"$gt": value}
+            # $gte：边界行 Load 失败时下次还能拉到
+            query[field] = {"$gte": value}
         cursor = db[coll_name].find(query).limit(_limit(job_cfg))
         rows = []
         for doc in cursor:
@@ -91,11 +92,17 @@ def mongo_load(config: dict, job_cfg: dict, row: dict, *, operation: str, match_
         payload = dict(row)
         payload.pop("_id", None)
         coll = db[coll_name]
-        if operation == "update" and match_keys:
-            filt = {k: row[k] for k in match_keys if k in row}
-            if filt:
-                coll.update_one(filt, {"$set": payload}, upsert=False)
-                return
+        filt = {k: row[k] for k in match_keys if k in row}
+        if operation == "delete":
+            if not filt:
+                raise RuntimeError("MongoDB delete 操作必须配置 matchKeys 以防误删全集合")
+            result = coll.delete_one(filt)
+            if result.deleted_count == 0:
+                raise RuntimeError(f"MongoDB delete 未命中匹配记录：{filt}")
+            return
+        if operation == "update" and match_keys and filt:
+            coll.update_one(filt, {"$set": payload}, upsert=False)
+            return
         coll.insert_one(payload)
     finally:
         _client.close()
@@ -164,7 +171,8 @@ def es_extract(config: dict, job_cfg: dict) -> list[dict]:
     field = (job_cfg.get("watermark_field") or "").strip()
     value = job_cfg.get("watermark_value") or ""
     if job_cfg.get("sync_mode") == "incremental" and field and value not in (None, ""):
-        body["query"] = {"range": {field: {"gt": value}}}
+        # gte：边界行 Load 失败时下次还能拉到
+        body["query"] = {"range": {field: {"gte": value}}}
         body["sort"] = [{field: "asc"}]
     import json as _json
 
@@ -199,6 +207,12 @@ def es_load(config: dict, job_cfg: dict, row: dict, *, operation: str, match_key
         doc_id = str(row[match_keys[0]])
     elif row.get("_id"):
         doc_id = str(row["_id"])
+    if operation == "delete":
+        if not doc_id:
+            raise RuntimeError("Elasticsearch delete 操作需要 doc_id（匹配键），以防误删全索引")
+        url = f"{_es_base(config)}/{index}/_doc/{doc_id}"
+        http_request(url, method="DELETE", headers=_es_headers(config), timeout=30)
+        return
     payload = {k: v for k, v in row.items() if k != "_id"}
     if operation == "update" and doc_id:
         url = f"{_es_base(config)}/{index}/_update/{doc_id}"

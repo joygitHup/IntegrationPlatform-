@@ -14,6 +14,7 @@ try:
 
     ETL_RUNS = Counter("ip_etl_runs_total", "ETL 执行次数", ["status", "environment"])
     ETL_ROWS = Counter("ip_etl_rows_total", "ETL 处理行数", ["result", "environment"])
+    ETL_DELETE_ROWS = Counter("ip_etl_delete_rows_total", "ETL 删除行数（软删信号触发 delete 分支）", ["connector", "environment"])
     ETL_DURATION = Histogram("ip_etl_duration_seconds", "ETL 耗时", ["environment"])
     QUEUE_ENQUEUED = Counter("ip_queue_enqueued_total", "入队次数", ["backend", "environment"])
     SSO_LOGINS = Counter("ip_sso_logins_total", "SSO 登录", ["login_type", "result"])
@@ -21,7 +22,7 @@ try:
     HAVE_PROM = True
     CONTENT_TYPE_LATEST = _PROM_CT
 except ImportError:  # pragma: no cover
-    ETL_RUNS = ETL_ROWS = ETL_DURATION = QUEUE_ENQUEUED = SSO_LOGINS = QUEUE_DEPTH = None
+    ETL_RUNS = ETL_ROWS = ETL_DELETE_ROWS = ETL_DURATION = QUEUE_ENQUEUED = SSO_LOGINS = QUEUE_DEPTH = None
     HAVE_PROM = False
     generate_latest = None
 
@@ -29,6 +30,7 @@ _lock = threading.Lock()
 _mem = {
     "etl_runs": defaultdict(int),
     "etl_rows": defaultdict(int),
+    "etl_delete_rows": defaultdict(int),
     "etl_duration_sum": 0.0,
     "etl_duration_count": 0,
     "queue_enqueued": 0,
@@ -67,6 +69,14 @@ def observe_sso(*, login_type: str, result: str) -> None:
         _mem["sso_logins"][f"{login_type or 'unknown'}:{result or 'unknown'}"] += 1
     if HAVE_PROM:
         SSO_LOGINS.labels(login_type=login_type or "unknown", result=result or "unknown").inc()
+
+
+def observe_delete(*, connector: str, count: int = 1, environment: str = "dev") -> None:
+    """软删信号触发 delete 分支时调用，统计按连接器/环境的 delete 行数。"""
+    with _lock:
+        _mem["etl_delete_rows"][f"{connector or 'unknown'}:{environment or 'dev'}"] += int(count or 1)
+    if HAVE_PROM:
+        ETL_DELETE_ROWS.labels(connector=connector or "unknown", environment=environment or "dev").inc(count or 1)
 
 
 def set_queue_depth(n: int) -> None:

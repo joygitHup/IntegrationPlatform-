@@ -1,8 +1,15 @@
 from django.urls import path
 
 from open_api.views import (
+    BillingPlanView,
+    ClientBrandingView,
+    ClientEmbedTokenView,
     CatalogView,
     ConnectorCatalogView,
+    EmbedSlaView,
+    EmbedUsageView,
+    InvoicePdfView,
+    InvoiceView,
     OpenApiDocsView,
     OpenApiSpecView,
     OpenAppView,
@@ -32,6 +39,7 @@ from open_api.views import (
     OpenStatusView,
     OpenUsageView,
     OpenWorkspaceView,
+    PublicStatusView,
     TemplateCatalogView,
 )
 
@@ -68,4 +76,16 @@ urlpatterns = [
     path("open/sso/launch", OpenLaunchView.as_view()),
     path("open/clients", OpenClientView.as_view()),
     path("open/clients/rotate", OpenClientRotateView.as_view()),
+    # 按行计费
+    path("billing/plans", BillingPlanView.as_view()),
+    path("billing/plans/<str:plan_id>", BillingPlanView.as_view()),
+    path("invoices", InvoiceView.as_view()),
+    path("invoices/<str:invoice_id>/pdf", InvoicePdfView.as_view()),
+    # 对外 SLA 状态（匿名访问）
+    path("status", PublicStatusView.as_view()),
+    # 白标嵌入页（签名 token 模式）
+    path("embed/sla", EmbedSlaView.as_view()),
+    path("embed/usage", EmbedUsageView.as_view()),
+    path("embed/token", ClientEmbedTokenView.as_view()),
+    path("branding", ClientBrandingView.as_view()),
 ]

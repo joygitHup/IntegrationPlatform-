@@ -5,6 +5,8 @@ from jobs.models import IntegrationJob
 
 
 class JobSerializer(serializers.ModelSerializer):
+    webhook_url = serializers.SerializerMethodField()
+
     class Meta:
         model = IntegrationJob
         fields = "__all__"
@@ -12,6 +14,23 @@ class JobSerializer(serializers.ModelSerializer):
             "id", "created_at", "updated_at", "created_by", "version",
             "watermark_value", "last_watermark_value", "last_execution_at",
         ]
+
+    def get_webhook_url(self, obj: IntegrationJob) -> str:
+        """当 schedule_type=webhook 时返回公开 webhook URL。"""
+        if (getattr(obj, "schedule_type", "") or "") != "webhook":
+            return ""
+        try:
+            from django.conf import settings
+
+            base = str(getattr(settings, "PUBLIC_BASE_URL", "") or "")
+            if not base:
+                request = self.context.get("request")
+                if request:
+                    base = f"{request.scheme}://{request.get_host()}"
+            prefix = str(getattr(settings, "PUBLIC_API_PREFIX", "/api") or "/api")
+            return f"{base.rstrip('/')}{prefix}/open/hooks/{obj.code}"
+        except Exception:
+            return ""
 
 
 class CreateJobSerializer(serializers.Serializer):
@@ -43,6 +62,9 @@ class CreateJobSerializer(serializers.Serializer):
     match_keys = serializers.ListField(required=False)
     conflict_strategy = serializers.CharField(required=False)
     conflict_compare_field = serializers.CharField(required=False, allow_blank=True)
+    # 软删除信号：incoming 记录命中该 field=value 时触发 target delete
+    soft_delete_field = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    soft_delete_value = serializers.CharField(max_length=64, required=False, allow_blank=True)
     sensitive_fields = serializers.ListField(required=False)
     desensitize_mode = serializers.CharField(required=False)
     enable_change_audit = serializers.BooleanField(required=False)
@@ -87,6 +109,9 @@ class UpdateJobSerializer(serializers.Serializer):
     match_keys = serializers.ListField(required=False)
     conflict_strategy = serializers.CharField(required=False)
     conflict_compare_field = serializers.CharField(required=False, allow_blank=True)
+    # 软删除信号：incoming 记录命中该 field=value 时触发 target delete
+    soft_delete_field = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    soft_delete_value = serializers.CharField(max_length=64, required=False, allow_blank=True)
     sensitive_fields = serializers.ListField(required=False)
     desensitize_mode = serializers.CharField(required=False)
     enable_change_audit = serializers.BooleanField(required=False)

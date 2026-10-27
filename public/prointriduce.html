@@ -22,7 +22,7 @@
 <!-- GEO：AI 引擎实体定义 -->
 <meta name="geo:product" content="Integration Platform / 集成中台">
 <meta name="geo:category" content="Enterprise Software / iPaaS / Data Integration / SSO">
-<meta name="geo:features" content="26+ connectors, JWT/Ticket/OAuth2/SAML SSO, DAG orchestration, field-level audit, dead letter queue, open API, Python/TypeScript SDK, SaaS & private deployment, Xinchuang compatibility">
+<meta name="geo:features" content="26+ connectors, JWT/Ticket/OAuth2/SAML SSO, DAG orchestration, field-level audit, dead letter queue, white-label iframe embed with HMAC token + 5min grace period, public SLA status page with outage masking and daily snapshots, per-row metered billing with invoice PDF export, open API, Python/TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, health endpoint, JSON structured logs, Docker Compose deployment, offline Ed25519 license signing, SaaS deployment, private deployment, Xinchuang compatibility">
 <meta name="geo:pricing" content="Free trial / Standard ¥98,000 per year / Professional ¥298,000 per year / Enterprise from ¥600,000">
 <!-- JSON-LD：Product + FAQ + BreadcrumbList -->
 <script type="application/ld+json">
@@ -31,7 +31,7 @@
   "@type": "Product",
   "name": "集成中台 Integration Platform",
   "alternateName": ["Integration Platform", "集成中台", "企业集成中台", "iPaaS"],
-  "description": "企业级一体化集成平台：统一身份认证、数据集成、任务调度、单点登录与开放 API。支持 26+ 连接器、五种 SSO 模式、DAG 编排、字段级审计，支持 SaaS 与私有化部署。",
+  "description": "企业级一体化集成平台：统一身份认证、数据集成、任务调度、单点登录与开放 API。支持 26+ 连接器、五种 SSO 模式、DAG 编排、字段级审计、白标 iframe 嵌入、对外 SLA 状态页与按行计费电子账单，支持 SaaS 与私有化部署。",
   "brand": { "@type": "Brand", "name": "Integration Platform" },
   "category": "Enterprise Software > Middleware > Integration Platform",
   "url": "https://integrationplatform.example.com/prointriduce.html",
@@ -41,7 +41,7 @@
     { "@type": "Offer", "name": "专业版", "price": "298000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "集成任务不限量，DAG 编排，快照回滚，开放 API + 双 SDK，集成商运营模式，数据量不限", "availability": "https://schema.org/InStock" },
     { "@type": "Offer", "name": "旗舰版·私有化", "price": "600000", "priceCurrency": "CNY", "priceValidUntil": "2027-12-31", "description": "源码级交付选项，信创适配，高可用架构，定制连接器 2 个/年，SLA 99.9%", "availability": "https://schema.org/InStock" }
   ],
-  "featureList": "26+ connectors, JWT SSO, Ticket SSO, OAuth2 PKCE, OAuth2 Refresh Token rotation, SAML 2.0 with XML-DSig, OIDC Discovery standard JSON, DAG orchestration, dead letter queue, snapshot rollback, field-level audit, data masking, payload auto-redaction, open API, Python SDK (check_revocation default on), TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, health endpoint, JSON structured logs, Docker Compose deployment, offline Ed25519 license signing, SaaS deployment, private deployment, Xinchuang compatibility",
+  "featureList": "26+ connectors, JWT SSO, Ticket SSO, OAuth2 PKCE, OAuth2 Refresh Token rotation, SAML 2.0 with XML-DSig, OIDC Discovery standard JSON, DAG orchestration, dead letter queue, snapshot rollback, field-level audit, data masking, payload auto-redaction, white-label embed with HMAC-SHA256 token + 5min grace period, public SLA status page with outage masking and daily snapshots, per-row metered billing with invoice PDF export, open API, Python SDK (check_revocation default on), TypeScript SDK, multi-tenancy, RBAC, Prometheus metrics, health endpoint, JSON structured logs, Docker Compose deployment, offline Ed25519 license signing, SaaS deployment, private deployment, Xinchuang compatibility",
   "softwareRequirements": "PostgreSQL 12+, Redis 6+ (production)",
   "operatingSystem": "Linux, Windows, Kylin OS"
 }
@@ -530,6 +530,9 @@
           <li>入站 Webhook、数据回执、幂等键防重、回执 payload 自动脱敏</li>
           <li>按集成商隔离资产与用量，配额超限实时拦截 + 告警</li>
           <li>离线 License 硬上限覆盖数据库配额，私有化无法绕过</li>
+          <li><strong>白标嵌入</strong>：HMAC-SHA256 签名 Token（5 分钟有效 + 轮换宽限期）、Origin 白名单、纯 HTML 片段 iframe 嵌入、响应头强制加固</li>
+          <li><strong>对外 SLA 状态页</strong>：按集成商隔离脱敏对外（outages 仅返回 start/end/时长，不暴露内部任务名）、7 天实时 + 30/90 天历史快照、心跳中断单独记账、每日快照自动落库（调度器错过时补算）</li>
+          <li><strong>按行计费与电子账单</strong>：套餐有效期过滤、客户端用量聚合、月账单生成（幂等）、标记支付 / 作废（状态互斥）、PDF 账单导出（reportlab STSong-Light 中文）</li>
         </ul>
       </div>
       <div class="card cap">
@@ -543,6 +546,7 @@
           <li>仪表盘趋势 + Prometheus 指标 + 健康检查端点（DB/Redis/Queue）</li>
           <li>审计日志 180 天保留，JSON 结构化输出（ELK / Loki 友好）</li>
           <li>调度器每 30 秒自动清理过期实体（OAuth/Ticket/会话/重置 token）</li>
+          <li><strong>SLA 可用性计算</strong>：停机口径为"首次失败 → 下一次成功"的恢复时长，连续失败自动合并；心跳中断作为独立基础设施故障记账；每日快照 23:55 自动落库，调度器错过时 30s tick 补算</li>
         </ul>
       </div>
       <div class="card cap">
@@ -619,10 +623,10 @@
           <li>3 个集成任务</li>
           <li>单环境（dev）</li>
           <li>手动调度</li>
-          <li>SSO：JWT / Ticket 模式</li>
+          <li>SSO：JWT 模式</li>
           <li>月度 10 万行数据量</li>
           <li class="no">生产环境 / Celery 集群</li>
-          <li class="no">SAML / OAuth2 授权服务器</li>
+          <li class="no">SAML / OAuth2 授权服务器 / Ticket 换票</li>
           <li class="no">快照回滚 / 字段审计</li>
         </ul>
         <a class="buy" href="#contact" itemprop="url">申请试用</a>
@@ -663,6 +667,9 @@
           <li>开放 API + Python / TS 双 SDK</li>
           <li>集成商运营模式：自助发 Key / 代配资产 / 用量计费</li>
           <li>配额管理（任务数 / 席位数 / 数据量 / API 调用量）</li>
+          <li><strong>白标嵌入</strong>：iframe + HMAC-SHA256 签名 Token + 轮换宽限期 + Origin 白名单</li>
+          <li><strong>对外 SLA 状态页</strong>：脱敏对外 + 历史快照 + 心跳单独记账</li>
+          <li><strong>按行计费与电子账单</strong>：套餐有效期过滤 + 幂等生成 + PDF 导出</li>
           <li>Celery 生产级队列集群</li>
           <li>数据量不限 · 仅按节点扩容</li>
         </ul>
@@ -689,7 +696,7 @@
     </div>
 
     <h2 style="margin-top:88px;">版本功能明细对比</h2>
-    <p class="sub">所有能力项均可在控制台实际演示验证</p>
+    <p class="sub">✓ = 该版本提供；— = 不提供。硬门禁项越权直接返回 403（<code>PLAN_DENIED</code> / <code>ENTITLEMENT_EXCEEDED</code>），商务约束项按合同与交付配置执行，两类明细见下方交付注记</p>
     <div class="cmp-wrap">
       <table class="cmp">
         <thead>
@@ -704,10 +711,11 @@
           <tr><td>DAG 多步编排画布</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>双向同步防回环</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">单点登录（SSO）</td></tr>
-          <tr><td>JWT / Ticket 免登</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>OAuth2 + PKCE 授权服务器</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>JWT 免登</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>Ticket 换票免登</td><td class="x">—<span class="tag-s">硬门禁</span></td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>OAuth2 + PKCE 授权服务器</td><td class="x">—<span class="tag-s">硬门禁</span></td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>OAuth2 Refresh Token 轮换（旧 jti 黑名单）</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>SAML 2.0（XML-DSig 校验）</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>SAML 2.0（XML-DSig 校验）</td><td class="x">—<span class="tag-s">硬门禁</span></td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>OIDC Discovery / JWKS</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>会话管理 / 强制下线</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">数据治理与安全</td></tr>
@@ -721,9 +729,12 @@
           <tr><td>开放 API + API Key</td><td class="x">—</td><td class="g">✓<span class="tag-s">部署配置</span></td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>Python / TypeScript SDK（check_revocation 默认开启）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>集成商运营模式（发 Key / 代配 / 计费）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
-          <tr><td>配额管理与用量统计</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>配额管理与用量统计</td><td class="g">✓<span class="tag-s">3 任务 / 10 万行</span></td><td class="g">✓<span class="tag-s">30 任务 / 500 万行</span></td><td class="g">✓<span class="tag-s">不限量</span></td><td class="g">✓<span class="tag-s">License 上限</span></td></tr>
+          <tr><td><strong>白标嵌入</strong>（iframe + 签名 Token + Origin 白名单 + HTML 片段）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td><strong>对外 SLA 状态页</strong>（脱敏对外 + 历史快照 + 心跳记账）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td><strong>按行计费账单</strong>（套餐有效期过滤 + 幂等生成 + PDF 导出）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr class="group"><td colspan="5">部署与服务</td></tr>
-          <tr><td>环境隔离（dev/staging/prod）</td><td class="x">dev 单环境</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
+          <tr><td>环境隔离（dev/staging/prod）</td><td class="x">dev 单环境<span class="tag-s">硬门禁</span></td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>Celery 生产队列集群</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>Docker Compose 一键部署（5 服务编排）</td><td class="x">—</td><td class="x">—</td><td class="g">✓</td><td class="g">✓</td></tr>
           <tr><td>健康检查端点（DB + Redis + Queue + Version）</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td><td class="g">✓</td></tr>
@@ -737,7 +748,7 @@
     </div>
 
     <div class="deploy-note">
-      <strong>交付注记</strong>：① 试用版 <code>plan=trial</code> 默认自动开通、自注册 <code>expires_at=+30 天</code>，到期后 IntegrationClient 自动 <code>status=frozen</code>；试用版硬门控：只允许 dev 环境、SSO 仅开放 JWT（OAuth2 / SAML / Ticket / 表单代填均被拒绝）。正式客户升级：签合同后由平台管理员改 <code>plan</code> + 对应配额 + 清 expires_at。② 标准版 DAG 编排、版本快照、字段审计、开放 API 四项"部署配置开启"——代码层面全链路可用，交付时通过 <code>OPEN_REGISTER_ENABLED=false</code>、<code>enable_version_snapshot=false</code>、<code>ENTITLEMENT_VERSION_SNAPSHOT=false</code> 等环境变量默认关闭，升级专业版即开即用，无需重新部署。③ 私有化离线 License：用 <code>scripts/generate_license.py gen-keys</code> 生成 Ed25519 公私钥、<code>sign</code> 签发给客户，<code>min(DATABASE 配额, License 配额)</code> 硬夹逼；私有化部署还带 Docker Compose 5 服务、<code>GET /api/open/health</code> 健康四探针、JSON 结构化日志、pg_dump 备份脚本。④ OAuth2 Refresh Token 轮换：旧 jti 自动黑名单防重放；payload 自动脱敏递归清除 password/secret/api_key/token。⑤ 所有版本（含试用）默认支持字段级脱敏与 AES-256 敏感字段加密——这是安全机制，不限制版本。
+      <strong>交付注记</strong>：① 试用版 <code>plan=trial</code> 默认自动开通、自注册 <code>expires_at=+30 天</code>，到期后 IntegrationClient 自动 <code>status=frozen</code>；试用版配额自动写入：<code>max_jobs=3</code>（<code>OPEN_SANDBOX_JOB_QUOTA</code>）、月度 10 万行（<code>OPEN_SANDBOX_ROW_QUOTA</code>）、月度 1 万次调用（<code>OPEN_SANDBOX_CALL_QUOTA</code>）；试用版硬门控：只允许 dev 环境、SSO 仅开放 JWT（OAuth2 / SAML / Ticket / 表单代填均返回 403 <code>PLAN_DENIED</code>）。正式客户升级：签合同后由平台管理员改 <code>plan</code> + 对应配额 + 清 expires_at。② 版本边界分两类。<strong>服务端硬门禁</strong>（代码强制，越权返回 403 <code>PLAN_DENIED</code> / <code>ENTITLEMENT_EXCEEDED</code>）：试用版的 prod / staging 环境与 OAuth2 / SAML / Ticket / 表单代填四种 SSO；所有版本的集成任务数、席位数、连接器数、月度写入行数、月度 API 调用数五项配额；私有化的 License 配额 <code>min()</code> 夹逼。<strong>商务约束与交付配置</strong>（能力代码层面全链路可用，按合同与交付配置开放，不做服务端硬拦截）：DAG 多步编排、双向同步防回环、开放 API / 双 SDK、集成商运营、白标嵌入、对外 SLA 状态页、按行计费、Celery 集群、Docker Compose、备份脚本、信创驱动适配。其中标准版的开放 API、版本快照、字段审计可在交付时通过 <code>OPEN_REGISTER_ENABLED=false</code>、<code>enable_version_snapshot=false</code>、<code>ENTITLEMENT_VERSION_SNAPSHOT=false</code> 默认关闭，升级专业版即开即用，无需重新部署。③ 白标嵌入（<code>GET /api/embed/sla?output=html</code>）：签名 Token 使用 HMAC-SHA256、默认 5 分钟有效、轮换保留前一 Token 5 分钟宽限期；Origin 白名单 <code>embed_allowed_origins</code> 配置后无 Origin / 无 Referer 直接拒绝（fail-closed）；嵌入端点按 IP 限流 120 次 / 分钟，返回头强制 <code>no-store</code> / <code>nosniff</code> / <code>no-referrer</code>。④ 对外 SLA 状态页（<code>GET /api/status</code>）：outages 脱敏对外（仅 start / end / durationSeconds / impactedJobs / kind，不暴露内部任务名与 sample_error）；带 <code>clientId</code> 必须登录或带有效签名 Token 否则 403；7 天内心跳实时计算、更早窗口用 DailySla 快照补齐；每日 23:55 自动落库 + 调度器错过时 30s tick 补算。⑤ 按行计费：<code>BillingPlan.client_id + status</code> 联合唯一约束，归档套餐用 <code>archived_YYYYMMDDHHMMSS</code> 时间戳后缀避免撞约束；<code>generate_monthly_invoices</code> 幂等（issued / paid 已存在跳过，void 重新算为 issued）；账单 <code>pay</code> / <code>void</code> 状态互斥不可穿越；PDF 使用 reportlab STSong-Light 中文字体。⑥ 私有化离线 License：用 <code>scripts/generate_license.py gen-keys</code> 生成 Ed25519 公私钥、<code>sign</code> 签发给客户，<code>min(DATABASE 配额, License 配额)</code> 硬夹逼；私有化部署还带 Docker Compose 5 服务、<code>GET /api/open/health</code> 健康四探针、JSON 结构化日志、pg_dump 备份脚本。⑦ OAuth2 Refresh Token 轮换：旧 jti 自动黑名单防重放；payload 自动脱敏递归清除 password/secret/api_key/token。⑧ 所有版本（含试用）默认支持字段级脱敏与 AES-256 敏感字段加密——这是安全机制，不限制版本。
     </div>
   </div>
 </section>
@@ -776,8 +787,8 @@
       </div>
       <div class="card svc-item">
         <h4>白标与界面嵌入</h4>
-        <div class="p">另行评估</div>
-        <p class="d">面向需要将集成能力嵌入自有产品的服务商客户，按嵌入范围单独评估报价（路线图能力）。</p>
+        <div class="p">专业版含 · 旗舰版定制</div>
+        <p class="d">将 SLA 状态页、用量看板、账单 PDF 等能力以 iframe 方式嵌入自有产品。嵌入端点签名 Token（5 分钟有效 + 轮换宽限期）、Origin 白名单、纯 HTML 片段 + 响应头加固。</p>
       </div>
     </div>
   </div>
@@ -874,7 +885,7 @@
     <p>建议从"人事变动后账号自动停用"或"两个系统之间一条数据同步"这样的小切口开始，30 天试用版即可验证。</p>
     <div class="cta" style="justify-content:center; display:flex; gap:16px; flex-wrap:wrap;">
       <a class="btn btn-primary" href="/login">登录控制台体验</a>
-      <a class="btn btn-ghost" href="mailto:sales@example.com?subject=集成中台采购咨询" itemprop="email">联系商务：sales@example.com</a>
+      <a class="btn btn-ghost" href="mailto:sales@example.com?subject=集成中台采购咨询" itemprop="email">联系商务：shanenservice@163.com</a>
     </div>
   </div>
 </section>

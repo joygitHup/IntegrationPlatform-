@@ -1,11 +1,15 @@
 """集成任务服务。"""
 from __future__ import annotations
 
+import logging
+
 from django.db.models import Q
 
 from core.exceptions import ApiError
 from jobs.job_utils import prepare_job_data
 from jobs.models import IntegrationJob
+
+logger = logging.getLogger(__name__)
 
 
 def list_jobs(**filters):
@@ -152,6 +156,13 @@ def update_job(job_id: str, data: dict) -> IntegrationJob | None:
             data.get("target_datasource_id") if data.get("target_datasource_id") is not None else job.target_datasource_id,
         )
     skip = {"id", "created_at", "created_by", "code", "watermark_value", "last_watermark_value", "last_execution_at"}
+    # sync_mode 从 incremental → full 切换时自动清空水位线
+    # （保留 last_watermark_value 作为历史记录）
+    prev_sync = getattr(job, "sync_mode", "")
+    new_sync = data.get("sync_mode")
+    if new_sync and prev_sync == "incremental" and new_sync != "incremental":
+        job.watermark_value = ""
+        job.last_watermark_value = ""
     for key, value in data.items():
         if key in skip or not hasattr(job, key):
             continue
@@ -167,13 +178,59 @@ def set_job_status(job_id: str, status: str) -> IntegrationJob:
         raise ApiError("任务不存在", 404)
     if status == "running" and job.schedule_type == "manual":
         raise ApiError("手动触发的任务无需启动调度", 400)
+    # P2-6：frozen client 下 cron 任务禁止启 running（scheduler scan 也过滤了双保险）
+    if status == "running" and job.schedule_type == "cron" and job.client_id:
+        try:
+            from open_api.models import IntegrationClient
+
+            client = IntegrationClient.objects.filter(id=job.client_id).first()
+            if client and client.status == "frozen":
+                raise ApiError("客户已冻结，cron 任务无法启动", 403, code="CLIENT_FROZEN")
+        except ApiError:
+            raise
+        except Exception:
+            logger.warning("set_job_status 检查 frozen client 失败", exc_info=True)
     job.status = status
     job.save(update_fields=["status", "updated_at"])
     return job
 
 
+def reset_job_watermark(job_id: str, new_value: str | None = None) -> IntegrationJob:
+    """手动设置 / 清空水位线。
+
+    Args:
+        job_id: 任务 ID
+        new_value: 要设置的新水位线值；None 或空串表示清空（下次跑等价全量）
+    """
+    job = IntegrationJob.objects.filter(id=job_id).first()
+    if not job:
+        raise ApiError("任务不存在", 404)
+    # 校验：只有 incremental 任务才允许改水位线
+    if job.sync_mode != "incremental":
+        raise ApiError("仅增量任务支持手动设置水位线", 400)
+    old = job.watermark_value or ""
+    # 先把当前值滚到 last_watermark_value（保留历史）
+    if old and not job.last_watermark_value:
+        job.last_watermark_value = old
+    target = (new_value or "").strip()
+    job.watermark_value = target
+    job.save(update_fields=["watermark_value", "last_watermark_value", "updated_at"])
+    logger.info("reset watermark: job=%s old=%r new=%r", job_id, old, target)
+    return job
+
+
 def assert_accepts_push(job) -> None:
-    if getattr(job, "status", "") != "running":
+    """推数入队门禁。
+
+    - cron / schedule 型任务需要 running 状态（手动启动调度）
+    - **webhook 型任务不需要 running**——它是被动接收，不是调度器主动扫描，
+      用户创建后默认 stopped 也能收推数，running 状态对它没意义。
+    """
+    st = getattr(job, "status", "") or ""
+    sched = getattr(job, "schedule_type", "") or ""
+    if sched == "webhook":
+        return  # webhook 被动接收，不看 status
+    if st != "running":
         raise ApiError("任务未启动，拒绝接收推数", 409, code="JOB_STOPPED")
 
 

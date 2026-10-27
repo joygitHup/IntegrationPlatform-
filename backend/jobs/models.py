@@ -38,11 +38,17 @@ class IntegrationJob(StringIdModel):
     match_keys = models.JSONField(default=list)
     conflict_strategy = models.CharField(max_length=20, default="source_wins")
     conflict_compare_field = models.CharField(max_length=64, blank=True, default="")
+    # 软删除信号：incoming 记录该字段命中目标值时 → 触发 target delete（禁用/真删）。
+    # 留空则从不走 delete；例：soft_delete_field=status, soft_delete_value=inactive。
+    soft_delete_field = models.CharField(max_length=64, blank=True, default="")
+    soft_delete_value = models.CharField(max_length=64, blank=True, default="")
 
     callback_url = models.CharField(max_length=500, blank=True, default="")
     webhook_secret = models.CharField(max_length=128, blank=True, default="")
     alert_email = models.CharField(max_length=255, blank=True, default="")
     alert_webhook_url = models.CharField(max_length=500, blank=True, default="")
+    # 高水位线停滞告警防刷屏冷却：最近一次告警时间，24h 内同一 job 不再重复告警
+    last_stale_alert_at = models.DateTimeField(null=True, blank=True)
 
     sensitive_fields = models.JSONField(default=list)
     desensitize_mode = models.CharField(max_length=12, default="mask")

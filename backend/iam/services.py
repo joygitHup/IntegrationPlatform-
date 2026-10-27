@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from core.exceptions import ApiError
 from core.password import hash_password, validate_password, verify_password
-from iam.models import Role, RolePermission, User
+from iam.models import RevokedToken, Role, RolePermission, User
 
 
 def get_user_by_username(username: str) -> User | None:
@@ -184,6 +184,30 @@ def delete_user(user_id: str, *, operator_id: str = "") -> None:
     role = Role.objects.filter(id=user.role_id).first()
     if role and role.code == "admin" and _admin_active_count(exclude_id=user.id) == 0:
         raise ApiError("不能删除最后一个管理员", 400)
+    # 级联吊销该用户所有活跃 SSO 会话：jti 写黑名单 + 状态置 revoked，
+    # 否则删除用户后其 SSO token 在过期前仍能通过 /api/sso/validate。
+    from sso.models import SsoSession
+
+    sessions = list(SsoSession.objects.filter(user_id=user.id, status="active"))
+    if sessions:
+        from core.ids import generate_id
+
+        now = timezone.now()
+        for s in sessions:
+            jti = s.external_session_id or ""
+            if jti:
+                RevokedToken.objects.get_or_create(
+                    jti=jti,
+                    defaults={
+                        "id": generate_id("rev"),
+                        "token_type": "access",
+                        "user_id": user.id,
+                        "expires_at": s.expires_at,
+                    },
+                )
+        SsoSession.objects.filter(id__in=[s.id for s in sessions]).update(
+            status="revoked", logout_at=now, logout_type="user_deleted"
+        )
     user.delete()
 
 

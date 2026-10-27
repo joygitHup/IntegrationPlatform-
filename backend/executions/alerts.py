@@ -55,35 +55,57 @@ def _alert_targets(job) -> tuple[str, str]:
     return email, hook
 
 
+def _deliver(job, event: str, subject_prefix: str, body: dict, text_suffix: str = "") -> None:
+    """统一发送：Webhook + 邮件。失败告警与停滞告警共用。"""
+    email, hook = _alert_targets(job)
+    if not email and not hook:
+        return
+    if hook:
+        try:
+            from urllib.request import Request, urlopen
+
+            raw = json.dumps({"event": event, **body}, ensure_ascii=False, default=str).encode("utf-8")
+            req = Request(hook, data=raw, headers={"Content-Type": "application/json"}, method="POST")
+            with urlopen(req, timeout=8):
+                pass
+        except Exception:
+            logger.exception("告警 Webhook 发送失败 job=%s event=%s", job.code, event)
+    if email:
+        subject = f"[集成中台] {subject_prefix} {job.name}"
+        text = json.dumps({"event": event, **body}, ensure_ascii=False, indent=2, default=str) + text_suffix
+        _send_mail(email, subject, text)
+
+
 def notify_failure_alert(job, payload: dict) -> None:
     status = payload.get("status") or ""
     if status not in ("failed", "partial_failed", "error"):
         return
-    email, hook = _alert_targets(job)
-    if not email and not hook:
-        return
-    redacted_payload_text = _redact_sensitive(payload)
     body = {
-        "event": "job.failed",
         "jobId": job.id,
         "jobCode": job.code,
         "jobName": job.name,
         "status": status,
     }
-    if hook:
-        try:
-            from urllib.request import Request, urlopen
+    _deliver(
+        job,
+        event="job.failed",
+        subject_prefix="任务失败",
+        body=body,
+        text_suffix="\n\n原始 payload（已脱敏）:\n" + _redact_sensitive(payload),
+    )
 
-            raw = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
-            req = Request(hook, data=raw, headers={"Content-Type": "application/json"}, method="POST")
-            with urlopen(req, timeout=8):
-                pass
-        except Exception:
-            logger.exception("失败告警 Webhook 发送失败 job=%s", job.code)
-    if email:
-        subject = f"[集成中台] 任务失败 {job.name}"
-        text = json.dumps(body, ensure_ascii=False, indent=2, default=str) + "\n\n原始 payload（已脱敏）:\n" + redacted_payload_text
-        _send_mail(email, subject, text)
+
+def notify_stale_watermark(job, payload: dict) -> None:
+    """水位线停滞告警（连续多次执行水位线未推进）。"""
+    body = {
+        "jobId": job.id,
+        "jobCode": job.code,
+        "jobName": job.name,
+        "watermarkField": getattr(job, "watermark_field", ""),
+        "watermarkValue": getattr(job, "watermark_value", ""),
+        "message": payload.get("message") or "增量水位线连续多次执行未推进",
+    }
+    _deliver(job, event="job.stale_watermark", subject_prefix="水位线停滞", body=body)
 
 
 def _send_mail(to_addr: str, subject: str, text: str) -> None:

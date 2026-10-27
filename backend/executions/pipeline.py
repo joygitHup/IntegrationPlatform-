@@ -180,11 +180,21 @@ def make_sync_decision(
     incoming: dict,
     strategy: str = "source_wins",
     compare_field: str = "",
+    soft_delete_field: str = "",
+    soft_delete_value: str = "",
 ) -> str:
     """
-    返回 create / update / skip / conflict。
+    返回 create / update / delete / skip / conflict。
     source_wins: 覆盖目标；target_wins: 保留目标；newest_wins: 比较时间；manual: 冲突人工处理。
+
+    delete 触发条件：soft_delete_field + soft_delete_value 都已配置，
+    且 incoming[soft_delete_field] == soft_delete_value，且 existing 存在。
     """
+    # 软删除信号先判（优先级最高，避免 source_wins 覆盖掉 delete 意图）
+    if soft_delete_field and soft_delete_value and existing is not None:
+        actual = str(incoming.get(soft_delete_field, "") or "")
+        if actual == soft_delete_value:
+            return "delete"
     if existing is None:
         return "create"
     if strategy == "source_wins":

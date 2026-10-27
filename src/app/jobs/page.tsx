@@ -119,6 +119,10 @@ export default function JobsPage() {
   const [datasourceList, setDatasourceList] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('basic');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  // 编辑模式下当前任务的水位线值（纯展示 + 重置）
+  const [currentJobWatermark, setCurrentJobWatermark] = useState<{ value: string; last: string } | null>(null);
+  const [resettingWm, setResettingWm] = useState(false);
+  const [resetWmInput, setResetWmInput] = useState('');
   const [sourceColumns, setSourceColumns] = useState<string[]>([]);
   const [inspectedTables, setInspectedTables] = useState<string[]>([]);
   const [inspectLoading, setInspectLoading] = useState(false);
@@ -240,6 +244,7 @@ export default function JobsPage() {
     setCodeTouched(true);
     setDialogLoading(true);
     setDialogOpen(true);
+    setCurrentJobWatermark(null);
     try {
       const detail = await jobsApi.get(job.id);
       setForm(formFromJobDetail(detail));
@@ -247,11 +252,40 @@ export default function JobsPage() {
       setInspectedTables([]);
       setSourceColumns([]);
       setActiveTab('basic');
+      setCurrentJobWatermark({
+        value: detail.watermarkValue || '',
+        last: detail.lastWatermarkValue || '',
+      });
+      setResetWmInput('');
     } catch (error) {
       toast.error((error as Error).message);
       setDialogOpen(false);
     } finally {
       setDialogLoading(false);
+    }
+  };
+
+  const handleResetWatermark = async (value?: string) => {
+    if (!editingId) return;
+    // 显式传值优先（"清空"按钮传空串），否则读输入框
+    const target = value !== undefined ? value : resetWmInput.trim();
+    setResettingWm(true);
+    try {
+      const result = await jobsApi.resetWatermark(editingId, target || null);
+      setCurrentJobWatermark({
+        value: result.watermarkValue || '',
+        last: result.lastWatermarkValue || '',
+      });
+      toast.success(
+        result.watermarkValue
+          ? `水位线已设为 ${result.watermarkValue}`
+          : '水位线已清空，下次执行等价全量同步'
+      );
+      setResetWmInput('');
+    } catch (error) {
+      toast.error((error as Error).message || '重置水位线失败');
+    } finally {
+      setResettingWm(false);
     }
   };
 
@@ -386,6 +420,12 @@ export default function JobsPage() {
       }
       const hint = result.message || (cols.length ? `探测到 ${cols.length} 个字段` : tableNames.length ? `探测到 ${tableNames.length} 个 Topic/队列/表` : '已探测，请填写表名后再试');
       toast.success(hint);
+      // 水位线字段建议：探测返回 suggestedWatermarkField 时，若当前是 incremental 且 watermarkField 空 → 自动填入
+      const suggested = result.suggestedWatermarkField as string | undefined;
+      if (suggested && form.syncMode === 'incremental' && !form.watermarkField.trim()) {
+        setForm((prev) => ({ ...prev, watermarkField: suggested! }));
+        toast.info(`已自动推荐水位字段: ${suggested}`);
+      }
     } catch (error) {
       toast.error((error as Error).message || '探测失败');
     } finally {
@@ -941,18 +981,77 @@ export default function JobsPage() {
                     </div>
 
                     {form.syncMode === 'incremental' && (
-                      <div className="space-y-2 rounded-lg bg-blue-50/50 p-4 border border-blue-100">
-                        <Label className="text-blue-700">水位字段（增量同步基准）</Label>
-                        <Input
-                          placeholder="如：updated_at / id"
-                          value={form.watermarkField}
-                          onChange={(e) => setForm({ ...form, watermarkField: e.target.value })}
-                          className={formErrors.watermarkField ? 'border-destructive' : ''}
-                        />
-                        {formErrors.watermarkField && <p className="text-xs text-destructive">{formErrors.watermarkField}</p>}
-                        <p className="text-xs text-blue-600">
-                          每次同步后记录该字段最大值，下一次仅同步大于该值的数据
-                        </p>
+                      <div className="space-y-3 rounded-lg bg-blue-50/50 p-4 border border-blue-100">
+                        <div className="space-y-2">
+                          <Label className="text-blue-700">水位字段（增量同步基准）</Label>
+                          <Input
+                            placeholder="如：updated_at / id"
+                            value={form.watermarkField}
+                            onChange={(e) => setForm({ ...form, watermarkField: e.target.value })}
+                            className={formErrors.watermarkField ? 'border-destructive' : ''}
+                          />
+                          {formErrors.watermarkField && <p className="text-xs text-destructive">{formErrors.watermarkField}</p>}
+                          <p className="text-xs text-blue-600">
+                            每次同步后记录该字段最大值，下一次仅同步大于该值的数据。探测源结构可自动推荐。
+                          </p>
+                        </div>
+
+                        {/* 编辑模式下：当前水位线展示 + 手动重置 */}
+                        {editingId && currentJobWatermark && (
+                          <div className="space-y-2 rounded-md border border-blue-200 bg-white/70 p-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium text-blue-800">当前水位线值</span>
+                              {currentJobWatermark.value ? (
+                                <code className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">
+                                  {currentJobWatermark.value}
+                                </code>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">（尚未记录，首次运行将全量同步）</span>
+                              )}
+                            </div>
+                            {currentJobWatermark.last && (
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">上一次水位线（回滚参考）</span>
+                                <code className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
+                                  {currentJobWatermark.last}
+                                </code>
+                              </div>
+                            )}
+                            <div className="flex items-end gap-2 pt-1">
+                              <div className="flex-1">
+                                <Input
+                                  placeholder="输入目标值，留空则清空水位线（下次等价全量）"
+                                  value={resetWmInput}
+                                  onChange={(e) => setResetWmInput(e.target.value)}
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleResetWatermark()}
+                                disabled={resettingWm}
+                                className="h-8 text-xs"
+                              >
+                                {resettingWm ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                                应用
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setResetWmInput('');
+                                  handleResetWatermark('');
+                                }}
+                                disabled={resettingWm || !currentJobWatermark.value}
+                                className="h-8 text-xs border-destructive text-destructive hover:bg-destructive/5"
+                                title="清空水位线，下次运行将全量同步"
+                              >
+                                清空
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </TabsContent>
@@ -1207,13 +1306,23 @@ export default function JobsPage() {
                           POST {(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '')}/open/hooks/{form.code || '{code}'}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Header 使用任务的 webhookSecret：X-Webhook-Secret。Body 为记录数组即可写入目标；不带 records 时仍需配置源数据源才能抽取。
+                          带 records body 会跳过 Extract 直接进 Transform → Load；不带 records 走正常 ETL 管道。
                         </p>
-                        <p className="text-xs text-amber-800">
-                          任务必须为「运行中」才会接收推数。新建默认停止，请先在列表点启动。
-                        </p>
-                        {form.webhookSecret && (
-                          <p className="font-mono text-xs break-all">X-Webhook-Secret: {form.webhookSecret}</p>
+                        <div className="pt-2 space-y-1">
+                          <Label htmlFor="webhookSecret" className="text-xs">Webhook Secret（生产必配，用于 HMAC 签名防重放）</Label>
+                          <Input
+                            id="webhookSecret"
+                            placeholder="留空则允许匿名触发（不安全）"
+                            value={form.webhookSecret}
+                            onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
+                          />
+                        </div>
+                        {form.webhookSecret ? (
+                          <p className="text-xs text-muted-foreground">
+                            签名头：<span className="font-mono">{'X-Hub-Signature-256: sha256={HMAC(secret, "{timestamp}.{raw_body}")}'}</span> 配合 <span className="font-mono">X-Hub-Timestamp</span>（±300s 窗口）
+                          </p>
+                        ) : (
+                          <p className="text-xs text-amber-800">未配 Secret 将允许裸 POST 触发，生产强烈建议补上。</p>
                         )}
                       </div>
                     )}
@@ -1395,6 +1504,26 @@ export default function JobsPage() {
                           onChange={(e) => setForm({ ...form, conflictCompareField: e.target.value })}
                         />
                         <p className="text-xs text-muted-foreground">时间优先时比较该字段，未填则用整行指纹。</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>软删除信号字段</Label>
+                        <Input
+                          placeholder="status"
+                          value={form.softDeleteField}
+                          onChange={(e) => setForm({ ...form, softDeleteField: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">源端记录命中该字段值 → 触发目标端删除（禁用/真删）。典型：HR 状态=inactive 时同步禁用钉钉用户。</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>软删除信号值</Label>
+                        <Input
+                          placeholder="inactive"
+                          value={form.softDeleteValue}
+                          onChange={(e) => setForm({ ...form, softDeleteValue: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">与上面字段匹配时走 delete 分支；两个都留空则永不触发删除。</p>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">

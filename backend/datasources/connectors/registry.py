@@ -355,18 +355,18 @@ register(Connector(
 ))
 register(Connector(
     type="ldap", name="LDAP", category="saas",
-    description="LDAP 目录服务",
+    description="LDAP 目录服务（读/写 + 通讯录双向同步）",
     config_schema=_schema(
         _field(name="url", label="LDAP URL", type="string", required=True, placeholder="ldap://localhost:389"),
         _field(name="bindDn", label="Bind DN", type="string", required=True),
         _field(name="bindPassword", label="密码", type="password", required=True, sensitive=True),
         _field(name="baseDn", label="Base DN", type="string", required=True),
     ),
-    type_support="source",
+    type_support="both",
 ))
 register(Connector(
     type="active_directory", name="Active Directory", category="saas",
-    description="Windows Active Directory",
+    description="Windows AD（读/写 + 通讯录双向同步）",
     config_schema=_schema(
         _field(name="host", label="域控主机", type="string", required=True),
         _field(name="port", label="端口", type="number", defaultValue=389),
@@ -374,7 +374,7 @@ register(Connector(
         _field(name="bindPassword", label="密码", type="password", required=True, sensitive=True),
         _field(name="baseDn", label="Base DN", type="string", required=True),
     ),
-    type_support="source",
+    type_support="both",
 ))
 register(Connector(
     type="scim2", name="SCIM 2.0", category="saas",
@@ -386,24 +386,26 @@ register(Connector(
 ))
 register(Connector(
     type="dingtalk", name="钉钉", category="saas",
-    description="钉钉通讯录 / 审批",
+    description="钉钉通讯录 双向同步（读/写）",
     config_schema=_schema(
         _field(name="appKey", label="AppKey", type="string", required=True),
         _field(name="appSecret", label="AppSecret", type="password", required=True, sensitive=True),
         _field(name="corpId", label="CorpId", type="string"),
+        _field(name="allowHardDelete", label="允许真删（默认禁用）", type="boolean", defaultValue=False),
     ),
-    type_support="source",
+    type_support="both",
     auth_methods=[{"type": "apikey", "label": "AppKey/Secret"}],
 ))
 register(Connector(
     type="wecom", name="企业微信", category="saas",
-    description="企业微信通讯录",
+    description="企业微信通讯录 双向同步（读/写）",
     config_schema=_schema(
         _field(name="corpId", label="CorpId", type="string", required=True),
         _field(name="secret", label="Secret", type="password", required=True, sensitive=True),
         _field(name="agentId", label="AgentId", type="string"),
+        _field(name="allowHardDelete", label="允许真删（默认禁用）", type="boolean", defaultValue=False),
     ),
-    type_support="source",
+    type_support="both",
 ))
 register(Connector(
     type="feishu", name="飞书", category="saas",

@@ -18,7 +18,7 @@ from datasources.connectors.runtime import (
     lookup_existing,
     record_key,
 )
-from datasources.connectors.watermark import greater as _wm_greater
+from datasources.connectors.watermark import greater as _wm_greater, geq as _wm_geq
 from datasources.config_utils import normalize_type
 from datasources.models import Datasource
 from datasources.services import decrypt_config
@@ -195,7 +195,8 @@ def run_etl(job_data: dict) -> dict:
             and job.watermark_field
             and job.watermark_value
         ):
-            records = [r for r in records if _wm_greater(r.get(job.watermark_field), job.watermark_value)]
+            # >= 对齐 SQL/MongoDB/ES 查询层（边界行 Load 失败时下次还能拉到）
+            records = [r for r in records if _wm_geq(r.get(job.watermark_field), job.watermark_value)]
 
         from jobs.filter_expr import apply_filter
 
@@ -209,6 +210,15 @@ def run_etl(job_data: dict) -> dict:
             tpl = get_template(job.template_type)
             if tpl:
                 status_mapping = tpl.get("statusMapping")
+        # Transform 前建索引：Transform 后按 match_keys 能找回原始行
+        # —— 保证水位线字段即使被 Transform 改名也能从原始行读到
+        match_keys = list(job.match_keys or [])
+        orig_by_key: dict[str, dict] = {}
+        for orig in records:
+            if match_keys:
+                k = record_key(orig, match_keys)
+                if k:
+                    orig_by_key[k] = orig
         if mappings:
             transformed = transform_batch(records, mappings, status_mapping=status_mapping)
         elif status_mapping:
@@ -222,19 +232,28 @@ def run_etl(job_data: dict) -> dict:
             transformed = {"success": records, "failed": []}
         from executions.loop_guard import is_echo, stamp
 
+        soft_del_field = (job.soft_delete_field or "").strip()
+        soft_del_value = (job.soft_delete_value or "").strip()
         echo_skipped = 0
         kept = []
         for row in transformed["success"]:
             if is_echo(row, job):
                 echo_skipped += 1
                 continue
-            kept.append(stamp(row, job))
+            # P1-2：delete 分支跳过 stamp——软删信号是源端自身的离职/下架记录，
+            # 不是双向同步的"回环"概念。stamp 了反而会让下一轮 is_echo 误判为回环而 skip，
+            # 导致 delete 信号永远发不出去。
+            if soft_del_field and soft_del_value and str(row.get(soft_del_field, "") or "") == soft_del_value:
+                kept.append(row)
+            else:
+                kept.append(stamp(row, job))
         success_rows = kept
         failed_items = transformed["failed"]
         skipped = echo_skipped
         written = 0
         load_failed = 0
-        match_keys = list(job.match_keys or [])
+        # Load 成功行的原始版本（用于算水位线，避免 Transform 改名）
+        written_rows_for_watermark: list[dict] = []
         target_cfg = _io_cfg(job, "target")
         target_plain = _plain_config(target_ds)
 
@@ -323,6 +342,8 @@ def run_etl(job_data: dict) -> dict:
                 incoming=row,
                 strategy=job.conflict_strategy,
                 compare_field=job.conflict_compare_field or "",
+                soft_delete_field=job.soft_delete_field or "",
+                soft_delete_value=job.soft_delete_value or "",
             )
             if job.write_mode == "update_only" and decision == "create":
                 skipped += 1
@@ -345,7 +366,7 @@ def run_etl(job_data: dict) -> dict:
                 )
                 load_failed += 1
                 continue
-            operation = "update" if decision == "update" else "create"
+            operation = "delete" if decision == "delete" else ("update" if decision == "update" else "create")
             try:
                 load_record(
                     target_ds.type, target_plain, target_cfg, row,
@@ -364,6 +385,17 @@ def run_etl(job_data: dict) -> dict:
                 load_failed += 1
                 continue
             written += 1
+            # 记录 Load 成功的原始行用于水位线推进
+            if match_keys:
+                orig_row = orig_by_key.get(record_key(row, match_keys))
+                if orig_row:
+                    written_rows_for_watermark.append(orig_row)
+            if operation == "delete":
+                try:
+                    from monitor.metrics import observe_delete
+                    observe_delete(connector=target_ds.type, environment=getattr(job, "environment", "") or "dev")
+                except Exception:
+                    pass
             if job.enable_change_audit:
                 audit_fields = resolve_sensitive_fields({**(existing or {}), **row}, job.sensitive_fields)
                 safe_row = desensitize_record(row, audit_fields, job.desensitize_mode)
@@ -401,7 +433,16 @@ def run_etl(job_data: dict) -> dict:
             status = "partial_failed"
         elif failed_count and not written:
             status = "failed"
-        watermark = _advance_watermark(records, job.watermark_field, job.watermark_value or "")
+        # 水位线推进策略：
+        # - success / partial_failed：从 Load 成功的行（written 条）里算 max，
+        #   失败的行留给死信处理，水位线不能"跨过"它们。
+        # - failed：不推进。
+        if status == "failed":
+            watermark = job.watermark_value or ""
+        elif written:
+            watermark = _advance_watermark(written_rows_for_watermark, job.watermark_field, job.watermark_value or "")
+        else:
+            watermark = _advance_watermark(records, job.watermark_field, job.watermark_value or "")
         retrying = False
         if status == "failed" and not job_data.get("deadLetterId"):
             from executions.services import schedule_retry

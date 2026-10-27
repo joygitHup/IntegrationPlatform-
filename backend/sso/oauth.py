@@ -117,7 +117,8 @@ def complete_authorization(app: Application, *, code: str, state: str, ip: str =
     if app.oauth_userinfo_url:
         try:
             profile = _http_get_json(app.oauth_userinfo_url, access)
-        except Exception:
+        except Exception as exc:
+            logger.warning("OAuth userinfo 拉取失败 app=%s url=%s reason=%s，回退 id_token", app.code, app.oauth_userinfo_url, exc)
             profile = {}
     if not profile and token_data.get("id_token"):
         profile = _decode_id_token(app, token_data["id_token"])

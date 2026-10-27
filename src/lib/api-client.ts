@@ -1,5 +1,7 @@
 'use client';
 
+import type { ConfigSchema } from '@/components/dynamic-config-form';
+
 // 推荐 NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000/api/v1；后端 /api/v1/ 与 /api/ 等价（历史兼容）
 // 未设时同源 /api 反代到 Django（仍可用，但建议显式带上版本号 /api/v1）
 const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE || '/api').replace(/\/+$/, '');
@@ -234,6 +236,8 @@ export const jobsApi = {
     filterCondition?: string;
     limit?: number;
   }) => apiClient.post<any>('/jobs/preview', data),
+  resetWatermark: (jobId: string, watermarkValue?: string | null) =>
+    apiClient.post<any>(`/jobs/${jobId}/reset-watermark`, { watermarkValue: watermarkValue ?? null }),
 };
 
 // Executions API
@@ -288,21 +292,7 @@ export interface ConnectorMetadata {
   icon: string;
   sourceSupported: boolean;
   targetSupported: boolean;
-  configSchema: {
-    fields: Array<{
-      name: string;
-      label: string;
-      type: string;
-      required?: boolean;
-      defaultValue?: any;
-      placeholder?: string;
-      help?: string;
-      group?: string;
-      options?: Array<{ value: string; label: string }>;
-      sensitive?: boolean;
-      showWhen?: { field: string; value: string };
-    }>;
-  };
+  configSchema: ConfigSchema;
   features: {
     batchRead: boolean;
     incrementalRead: boolean;
@@ -411,6 +401,40 @@ export const openApi = {
   buildSdk: () => apiClient.post<any>('/open/sdk/build', {}),
   downloadSdkUrl: (filename: string) =>
     `${(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '')}/open/sdk/download?file=${encodeURIComponent(filename)}`,
+  // 白标嵌入（路径不挂 /open，独立签名模式）
+  branding: (clientId: string) =>
+    apiClient.get<any>(`/branding?clientId=${encodeURIComponent(clientId)}`),
+  resetEmbedToken: (clientId?: string) =>
+    apiClient.post<any>('/embed/token', clientId ? { clientId } : {}),
+  sla: (days = 30, clientId?: string) =>
+    apiClient.get<any>(`/status?days=${days}${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ''}`),
+  // 账单与用量（tenant 隔离，非平台账号只看自己）
+  billingPlans: () => apiClient.get<any>('/billing/plans'),
+  invoices: (month?: string) =>
+    apiClient.get<any>(`/invoices${month ? `?month=${month}` : ''}`),
+  previewInvoice: (clientId?: string) =>
+    apiClient.post<any>('/invoices', { action: 'preview', ...(clientId ? { clientId } : {}) }),
+  generateInvoice: (month: string, clientId?: string) =>
+    apiClient.post<any>('/invoices', { action: 'generate', month, ...(clientId ? { clientId } : {}) }),
+  // 账单状态流转：action=void(作废) / pay(标记已支付)
+  invoiceAction: (action: 'void' | 'pay', invoiceId: string, reason?: string) =>
+    apiClient.post<any>('/invoices', { action, invoiceId, ...(reason ? { reason } : {}) }),
+  // 套餐创建 / 更新 / 归档
+  createPlan: (payload: Record<string, any>) =>
+    apiClient.post<any>('/billing/plans', payload),
+  updatePlan: (planId: string, payload: Record<string, any>) =>
+    apiClient.put<any>(`/billing/plans/${encodeURIComponent(planId)}`, payload),
+  archivePlan: (planId: string) =>
+    apiClient.delete<any>(`/billing/plans/${encodeURIComponent(planId)}`),
+  // 账单 PDF（带鉴权拉 blob，再由页面触发下载）
+  downloadInvoicePdf: async (invoiceId: string): Promise<Blob> => {
+    const token = apiClient.getToken();
+    const resp = await fetch(`${BASE_URL}/invoices/${encodeURIComponent(invoiceId)}/pdf`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!resp.ok) throw new Error(`PDF 下载失败（${resp.status}）`);
+    return resp.blob();
+  },
 };
 
 export const snapshotsApi = {

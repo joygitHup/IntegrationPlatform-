@@ -31,6 +31,82 @@ def normalize_steps(raw) -> list[dict]:
     return steps
 
 
+def retry_step(workflow_run_id: str, step_id: str, *, triggered_by: str = "") -> dict:
+    """从指定 step 重新跑——前面的 success step 跳过，本 step + 其后继全部重置为 pending 再入队。
+
+    使用场景：DAG 第 4 步失败，人工修完环境后只重跑第 4 步及后面的，前 3 步不再执行。
+    幂等任务（无副作用）直接整步重跑；有副作用的 step（发通知/推送）建议先整体重跑。
+    """
+    from executions.models import WorkflowRun
+    from jobs.models import IntegrationJob
+
+    run = WorkflowRun.objects.filter(id=workflow_run_id).first()
+    if not run:
+        from core.exceptions import ApiError
+
+        raise ApiError("DAG 运行不存在", 404)
+    job = IntegrationJob.objects.filter(id=run.job_id).first()
+    if not job:
+        from core.exceptions import ApiError
+
+        raise ApiError("任务不存在", 404)
+    steps = normalize_steps(job.dag_steps)
+    step_ids = {s["id"] for s in steps}
+    if step_id not in step_ids:
+        from core.exceptions import ApiError
+
+        raise ApiError(f"步骤 {step_id} 不在任务 DAG 中", 400)
+
+    # 计算从目标 step 起所有后继（包括自身）：反向依赖传播
+    descendants: set[str] = {step_id}
+    changed = True
+    while changed:
+        changed = False
+        for s in steps:
+            deps = set(s.get("dependsOn") or [])
+            # 如果 step 的依赖任一在 descendants 中（或它自己就是目标），也要重置
+            if s["id"] in descendants:
+                continue
+            if deps & descendants:
+                descendants.add(s["id"])
+                changed = True
+
+    # 前置 success 的不动；目标 + 后继从 step_states 里重置为 pending
+    states = dict(run.step_states or {})
+    reset_now: list[str] = []
+    for sid in descendants:
+        cur = states.get(sid, "pending")
+        if cur in ("pending", "running"):
+            # 幂等保护：已在 pending/running 的 step 不再重置入队
+            logger.info("retry_step 跳过已在执行中的 step=%s 状态=%s", sid, cur)
+            continue
+        states[sid] = "pending"
+        reset_now.append(sid)
+    run.step_states = states
+    run.status = "running"
+    run.finished_at = None
+    run.started_at = run.started_at or timezone.now()
+    run.save(update_fields=["step_states", "status", "started_at", "finished_at", "updated_at"])
+
+    queued = []
+    ready = ready_steps(steps, states)
+    for step in ready:
+        if step["id"] not in reset_now:
+            # 前置 success step 不在 reset_now 里，跳过不入队
+            continue
+        queued.append(
+            _enqueue_step(job, run, step, run.trigger_type or "manual", triggered_by or run.triggered_by, None)
+        )
+    return {
+        "workflowRunId": run.id,
+        "retriedStepId": step_id,
+        "resetSteps": reset_now,
+        "skippedSteps": sorted(descendants - set(reset_now)),
+        "stepsQueued": [q["stepId"] for q in queued],
+        "totalSteps": len(steps),
+    }
+
+
 def has_cycle(steps: list[dict]) -> bool:
     graph = {s["id"]: [d for d in (s.get("dependsOn") or []) if d != s["id"]] for s in steps}
     color: dict[str, int] = {}

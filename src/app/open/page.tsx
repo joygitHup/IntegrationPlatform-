@@ -35,6 +35,9 @@ import {
   Package,
   Hammer,
   FileText,
+  Code2,
+  ShieldCheck,
+  LayoutTemplate,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -61,6 +64,11 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
+
+// 后端 API 基地址（含版本号），如 http://127.0.0.1:8000/api/v1
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+// 站点根（去掉 /api 与可选版本号），用于拼接对外绝对链接
+const PLATFORM_ORIGIN = API_BASE.replace(/\/api(\/v\d+)?$/, '');
 
 const TYPE_ICONS: Record<string, typeof Plug> = {
   application: Grid3X3,
@@ -93,8 +101,613 @@ function copyText(text: string, label: string) {
   );
 }
 
+function EmbedAlgorithmBlock() {
+  const [lang, setLang] = useState<'python' | 'java' | 'node'>('python');
+
+  const snippets: Record<string, string> = {
+    python: `import hmac, hashlib, time
+
+# 你的 IntegrationClient.id 和 embed_token
+client_id  = "ic_xxxxx"
+embed_token = "48 位十六进制（从平台 POST /api/embed/token 拿到）"
+
+ts = str(int(time.time()))            # 秒级 Unix 时间戳
+sig = hmac.new(
+    embed_token.encode(),
+    f"{client_id}.{ts}".encode(),
+    hashlib.sha256,
+).hexdigest()
+
+token = f"{ts}.{sig}"                 # 塞进 iframe URL`,
+
+    java: `import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.MessageDigest;
+
+String clientId  = "ic_xxxxx";
+String embedToken = "48 位十六进制";
+
+String ts = String.valueOf(System.currentTimeMillis() / 1000);
+String data = clientId + "." + ts;
+
+Mac mac = Mac.getInstance("HmacSHA256");
+mac.init(new SecretKeySpec(embedToken.getBytes(), "HmacSHA256"));
+byte[] raw = mac.doFinal(data.getBytes());
+
+// byte[] → hex
+StringBuilder sb = new StringBuilder();
+for (byte b : raw) sb.append(String.format("%02x", b));
+String token = ts + "." + sb.toString();`,
+
+    node: `const crypto = require('crypto');
+
+const clientId  = 'ic_xxxxx';
+const embedToken = '48 位十六进制';
+
+const ts = Math.floor(Date.now() / 1000);
+const sig = crypto.createHmac('sha256', embedToken)
+  .update(\`\${clientId}.\${ts}\`)
+  .digest('hex');
+
+const token = \`\${ts}.\${sig}\`;  // 塞进 iframe URL`,
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1">
+        {(['python', 'java', 'node'] as const).map((l) => (
+          <button
+            key={l}
+            onClick={() => setLang(l)}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+              lang === l
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            {l === 'python' ? 'Python' : l === 'java' ? 'Java' : 'Node.js'}
+          </button>
+        ))}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          onClick={() => copyText(snippets[lang], '代码')}
+        >
+          <Copy className="mr-1 h-3 w-3" />
+          复制
+        </Button>
+      </div>
+      <pre className="overflow-x-auto rounded bg-muted p-3 text-xs leading-5 font-mono">
+        {snippets[lang]}
+      </pre>
+      <p className="text-[11px] text-muted-foreground">
+        格式：<code className="font-mono">{'token = "{unix_ts}.{HMAC-SHA256(client_id + "." + ts, embed_token)}"'}</code>
+      </p>
+    </div>
+  );
+}
+
+const PLAN_FIELDS: [string, string][] = [
+  ['monthlyBaseFee', '基费 / 月'],
+  ['pricePerRow', '行写入单价'],
+  ['pricePerApiCall', 'API 调用单价'],
+  ['freeRowsPerMonth', '免费行 / 月'],
+  ['freeApiCallsPerMonth', '免费调用 / 月'],
+  ['taxRate', '税率（小数，如 0.06）'],
+];
+
+/** 表单里的数字都是字符串，提交前统一转 number；空串保留 0 */
+function coerceNumbers(form: Record<string, any>): Record<string, number> {
+  const out: Record<string, number> = {};
+  Object.entries(form).forEach(([k, v]) => {
+    if (v === '' || v === null || v === undefined) {
+      out[k] = 0;
+    } else if (typeof v === 'string') {
+      const n = Number(v);
+      out[k] = Number.isFinite(n) ? n : 0;
+    } else {
+      out[k] = Number(v) || 0;
+    }
+  });
+  return out;
+}
+
+/** 上月账期 YYYY-MM（生成账单默认账期） */
+function lastMonthKey(): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function BillingTab({ isPlatform, canManage }: { isPlatform: boolean; canManage: boolean }) {
+  const [plans, setPlans] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [usage, setUsage] = useState<any>(null);
+  const [preview, setPreview] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [previewing, setPreviewing] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [planForm, setPlanForm] = useState<Record<string, any>>({});
+  const [newPlanForm, setNewPlanForm] = useState<Record<string, any>>({
+    monthlyBaseFee: 0,
+    pricePerRow: 0.005,
+    pricePerApiCall: 0.001,
+    freeRowsPerMonth: 0,
+    freeApiCallsPerMonth: 0,
+    taxRate: 0.06,
+  });
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [plansResp, invResp, usageResp, clientsResp] = await Promise.all([
+        openApi.billingPlans().catch(() => []),
+        openApi.invoices().catch(() => []),
+        openApi.usage().catch(() => null),
+        isPlatform ? openApi.clients.list().catch(() => []) : Promise.resolve([]),
+      ]);
+      const list = Array.isArray(plansResp) ? plansResp : (plansResp?.items ?? []);
+      setPlans(list);
+      const clientList = Array.isArray(clientsResp) ? clientsResp : (clientsResp?.items ?? []);
+      setClients(clientList);
+      const invList = Array.isArray(invResp) ? invResp : (invResp?.items ?? []);
+      setInvoices(invList.sort((a: any, b: any) => (a.periodStart < b.periodStart ? 1 : -1)));
+      setUsage(usageResp);
+    } catch (e) {
+      toast.error((e as Error).message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 平台账号可切换客户查看/配置；集成商只会拿到自己那一行（后端按 clientId 过滤）
+  const activeClientId = isPlatform
+    ? (selectedClientId || clients[0]?.id || '')
+    : (plans[0]?.clientId || '');
+  const plan = plans.find((p: any) => !activeClientId || p.clientId === activeClientId) ?? null;
+  const visibleInvoices = isPlatform && activeClientId
+    ? invoices.filter((i: any) => i.clientId === activeClientId)
+    : invoices;
+  const activeClient = clients.find((c: any) => c.id === activeClientId) ?? null;
+
+  const handlePreview = async () => {
+    setPreviewing(true);
+    try {
+      const data = await openApi.previewInvoice(isPlatform ? activeClientId : undefined);
+      setPreview(data);
+      toast.success('已生成本月预估账单');
+    } catch (e) {
+      toast.error((e as Error).message || '预览失败');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // 账单状态流转：作废 / 标记已支付
+  const handleStatus = async (inv: any, action: 'void' | 'pay') => {
+    const label = action === 'pay' ? '标记为已支付' : '作废';
+    if (!window.confirm(`确认${label}账单 ${inv.invoiceNumber || inv.id}？`)) return;
+    setActing(inv.id);
+    try {
+      const reason = action === 'void'
+        ? window.prompt('作废原因（可留空）') || ''
+        : undefined;
+      await openApi.invoiceAction(action, inv.id, reason);
+      toast.success(`${label}成功`);
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message || `${label}失败`);
+    } finally {
+      setActing(null);
+    }
+  };
+
+  // 下载 PDF（带 JWT 拉 blob 后触发浏览器下载）
+  const handlePdf = async (inv: any) => {
+    setActing(inv.id);
+    try {
+      const blob = await openApi.downloadInvoicePdf(inv.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${inv.invoiceNumber || inv.id}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error((e as Error).message || 'PDF 下载失败');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  // 套餐更新（PUT）
+  const handleSavePlan = async () => {
+    if (!plan?.id) return;
+    setSaving(true);
+    try {
+      await openApi.updatePlan(plan.id, coerceNumbers(planForm));
+      toast.success('计费套餐已更新');
+      setEditing(false);
+      setPlanForm({});
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message || '套餐更新失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 新建套餐（平台首次为客户配置资费）
+  const handleCreatePlan = async () => {
+    if (!activeClientId) {
+      toast.error('请先选择要配置资费的客户');
+      return;
+    }
+    setSaving(true);
+    try {
+      await openApi.createPlan({ clientId: activeClientId, ...coerceNumbers(newPlanForm) });
+      toast.success('计费套餐已创建');
+      setCreating(false);
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message || '套餐创建失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 手动生成账单（默认上月）
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const month = lastMonthKey();
+      const resp = await openApi.generateInvoice(month, isPlatform ? activeClientId : undefined);
+      toast.success(`已生成 ${month} 账单（${resp?.generated ?? 0} 张）`);
+      await load();
+    } catch (e) {
+      toast.error((e as Error).message || '账单生成失败');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Card><CardContent className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />加载中...
+      </CardContent></Card>
+    );
+  }
+
+  const freeRows = plan?.freeRowsPerMonth ?? 0;
+  const freeCalls = plan?.freeApiCallsPerMonth ?? 0;
+  const rowPrice = plan?.pricePerRow ?? 0;
+  const callPrice = plan?.pricePerApiCall ?? 0;
+  const baseFee = plan?.monthlyBaseFee ?? 0;
+  const taxRate = plan?.taxRate ?? 0;
+  const currency = plan?.currency ?? 'CNY';
+
+  const monthRows = usage?.month?.rowsWritten ?? 0;
+  const monthCalls = usage?.month?.apiCalls ?? 0;
+  const rowQuota = usage?.quotas?.monthlyRowQuota || usage?.entitlements?.maxRowsMonthly || 0;
+  const callQuota = usage?.quotas?.monthlyCallQuota || usage?.entitlements?.maxApiCallsMonthly || 0;
+
+  const rowPct = rowQuota > 0 ? Math.min(100, Math.round((monthRows / rowQuota) * 100)) : 0;
+  const callPct = callQuota > 0 ? Math.min(100, Math.round((monthCalls / callQuota) * 100)) : 0;
+
+  const fmt = (n: number) => n.toLocaleString('zh-CN');
+  const fmtMoney = (n: number) => `${currency} ${Number(n).toFixed(2)}`;
+
+  return (
+    <div className="space-y-6">
+      {isPlatform && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center gap-3 py-3">
+            <span className="text-xs text-muted-foreground">查看客户</span>
+            <Select
+              value={activeClientId}
+              onValueChange={(v) => { setSelectedClientId(v); setPreview(null); setEditing(false); setCreating(false); }}
+            >
+              <SelectTrigger className="h-8 w-64 text-xs">
+                <SelectValue placeholder="选择客户" />
+              </SelectTrigger>
+              <SelectContent>
+                {clients.length === 0 ? (
+                  <SelectItem value="__none" disabled>暂无集成商客户</SelectItem>
+                ) : (
+                  clients.map((c: any) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name || c.code || c.id}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            {activeClient && (
+              <span className="text-xs text-muted-foreground">
+                客户编码：<span className="font-mono">{activeClient.code || '-'}</span>
+              </span>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 套餐卡片 + 用量进度 */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base">当前计费套餐</CardTitle>
+            {plan && canManage && !editing && (
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                onClick={() => {
+                  setPlanForm({
+                    pricePerRow: rowPrice,
+                    pricePerApiCall: callPrice,
+                    monthlyBaseFee: baseFee,
+                    freeRowsPerMonth: freeRows,
+                    freeApiCallsPerMonth: freeCalls,
+                    taxRate,
+                  });
+                  setEditing(true);
+                }}>
+                <Pencil className="mr-1 h-3 w-3" />编辑
+              </Button>
+            )}
+            {!plan && canManage && !creating && (
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setCreating(true)}>
+                <Plus className="mr-1 h-3 w-3" />新建套餐
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {plan && editing && (
+              <div className="space-y-2 rounded-md border p-2.5">
+                {PLAN_FIELDS.map(([key, label]) => (
+                  <div key={key} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <Input className="h-7 w-28 text-xs" type="number" step="0.0001"
+                      value={planForm[key] ?? ''}
+                      onChange={(e) => setPlanForm((f) => ({ ...f, [key]: e.target.value }))} />
+                  </div>
+                ))}
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setEditing(false); setPlanForm({}); }}>
+                    取消
+                  </Button>
+                  <Button size="sm" className="h-7 text-xs" onClick={handleSavePlan} disabled={saving}>
+                    {saving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}保存
+                  </Button>
+                </div>
+              </div>
+            )}
+            {creating && canManage && (
+              <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/50 p-2.5 dark:border-sky-900 dark:bg-sky-950/20">
+                <p className="text-xs font-medium text-sky-900 dark:text-sky-200">
+                  为 {activeClient?.name || '当前客户'} 配置计费套餐
+                </p>
+                {PLAN_FIELDS.map(([key, label]) => (
+                  <div key={key} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <Input className="h-7 w-28 text-xs" type="number" step="0.0001"
+                      value={newPlanForm[key] ?? ''}
+                      onChange={(e) => setNewPlanForm((f) => ({ ...f, [key]: e.target.value }))} />
+                  </div>
+                ))}
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setCreating(false)}>
+                    取消
+                  </Button>
+                  <Button size="sm" className="h-7 text-xs" onClick={handleCreatePlan} disabled={saving || !activeClientId}>
+                    {saving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}创建
+                  </Button>
+                </div>
+              </div>
+            )}
+            {plan ? (
+              <>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">基费 / 月</span>
+                    <span className="font-medium">{fmtMoney(baseFee)}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">币种</span>
+                    <span className="font-medium">{currency}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">行写入单价</span>
+                    <span className="font-medium">{fmtMoney(rowPrice)} / 行</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">API 调用单价</span>
+                    <span className="font-medium">{fmtMoney(callPrice)} / 次</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">免费行 / 月</span>
+                    <span className="font-medium">{fmt(freeRows)}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">免费调用 / 月</span>
+                    <span className="font-medium">{fmt(freeCalls)}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">税率</span>
+                    <span className="font-medium">{(taxRate * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-muted-foreground">状态</span>
+                    <Badge variant={plan.status === 'active' ? 'success' : 'secondary'}>{plan.status}</Badge>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                尚未配置计费套餐（免费额度内不产生账单）
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base">本月用量</CardTitle>
+            <Button size="sm" variant="outline" onClick={handlePreview} disabled={previewing}>
+              {previewing && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+              预估本月账单
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <UsageBar label="行写入" used={monthRows} quota={rowQuota} pct={rowPct} />
+            <UsageBar label="API 调用" used={monthCalls} quota={callQuota} pct={callPct} />
+            {preview && (
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs dark:border-sky-900 dark:bg-sky-950/40">
+                <p className="mb-2 font-medium text-sky-900 dark:text-sky-200">本月预估（{preview.periodStart || '-'} ~ {preview.periodEnd || '-'}）</p>
+                <div className="grid grid-cols-2 gap-2 text-muted-foreground">
+                  <span>行写入：{fmt(preview.rowsWritten ?? 0)} / 计费 {fmt(preview.rowsInvoiced ?? 0)}</span>
+                  <span>API 调用：{fmt(preview.apiCalls ?? 0)} / 计费 {fmt(preview.apiCallsInvoiced ?? 0)}</span>
+                  <span>基费：{fmtMoney(preview.baseFee ?? 0)}</span>
+                  <span>行费用：{fmtMoney(preview.rowsAmount ?? 0)}</span>
+                  <span>调用费用：{fmtMoney(preview.apiCallsAmount ?? 0)}</span>
+                  <span>税额：{fmtMoney(preview.taxAmount ?? 0)}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold text-sky-900 dark:text-sky-200">
+                  预计总额：{fmtMoney(preview.totalAmount ?? 0)}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 历史账单 */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">历史账单</CardTitle>
+          {canManage && (
+            <Button size="sm" variant="outline" className="h-7 text-xs"
+              onClick={handleGenerate} disabled={generating || (isPlatform && !activeClientId)}>
+              {generating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              生成上月账单
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {visibleInvoices.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              暂无账单记录。每月 1 号 00:10 自动生成上月账单。
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-2 font-medium">账期</th>
+                    <th className="py-2 font-medium">行写入</th>
+                    <th className="py-2 font-medium">API 调用</th>
+                    <th className="py-2 font-medium">基费</th>
+                    <th className="py-2 font-medium">小计</th>
+                    <th className="py-2 font-medium">税额</th>
+                    <th className="py-2 font-medium">总额</th>
+                    <th className="py-2 font-medium">状态</th>
+                    <th className="py-2 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleInvoices.map((inv) => (
+                    <tr key={inv.id} className="border-b last:border-0">
+                      <td className="py-2.5 font-mono text-xs">
+                        {inv.periodStart?.slice(0, 7)}
+                      </td>
+                      <td className="py-2.5 text-xs">
+                        {fmt(inv.rowsWritten ?? 0)}
+                        {(inv.rowsInvoiced ?? 0) !== (inv.rowsWritten ?? 0) && (
+                          <span className="ml-1 text-muted-foreground">({fmt(inv.rowsInvoiced)} 计费)</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 text-xs">
+                        {fmt(inv.apiCalls ?? 0)}
+                        {(inv.apiCallsInvoiced ?? 0) !== (inv.apiCalls ?? 0) && (
+                          <span className="ml-1 text-muted-foreground">({fmt(inv.apiCallsInvoiced)} 计费)</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 text-xs">{fmtMoney(inv.baseFee ?? 0)}</td>
+                      <td className="py-2.5 text-xs">{fmtMoney(inv.subtotal ?? 0)}</td>
+                      <td className="py-2.5 text-xs">{fmtMoney(inv.taxAmount ?? 0)}</td>
+                      <td className="py-2.5 text-sm font-semibold">{fmtMoney(inv.totalAmount ?? 0)}</td>
+                      <td className="py-2.5">
+                        <Badge variant={
+                          inv.status === 'paid' ? 'success' :
+                          inv.status === 'issued' ? 'outline' :
+                          inv.status === 'void' ? 'destructive' : 'secondary'
+                        } className="text-[10px]">
+                          {inv.status === 'paid' ? '已支付'
+                            : inv.status === 'issued' ? '已开票'
+                            : inv.status === 'void' ? '已作废' : '草稿'}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <div className="inline-flex items-center gap-1">
+                          {inv.status === 'issued' && (
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                              disabled={acting === inv.id} onClick={() => handleStatus(inv, 'pay')}>
+                              标记支付
+                            </Button>
+                          )}
+                          {(inv.status === 'draft' || inv.status === 'issued') && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive"
+                              disabled={acting === inv.id} onClick={() => handleStatus(inv, 'void')}>
+                              作废
+                            </Button>
+                          )}
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                            disabled={acting === inv.id} onClick={() => handlePdf(inv)}>
+                            <Download className="mr-1 h-3 w-3" />PDF
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function UsageBar({ label, used, quota, pct }: { label: string; used: number; quota: number; pct: number }) {
+  const color = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-primary';
+  const fmt = (n: number) => n.toLocaleString('zh-CN');
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium">{label}</span>
+        <span className="text-muted-foreground">
+          {fmt(used)} {quota > 0 && `/ ${fmt(quota)}`}
+          {quota > 0 && <span className="ml-1 font-semibold text-foreground">· {pct}%</span>}
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+        <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function snippet(apiKey: string) {
-  const base = (process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+  const base = API_BASE;
   const key = apiKey || 'ipk_你的密钥';
   return `# 0. 自助开通沙箱（也可由控制台发放）
 curl -s -X POST ${base}/open/register \\
@@ -222,7 +835,7 @@ export default function OpenServicesPage() {
 
   const buildIntegrationGuide = () => {
     if (!selectedApp) return '';
-    const platformUrl = (process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '');
+    const platformUrl = PLATFORM_ORIGIN;
     const useRsa = selectedApp.settings?.useRsa === true || selectedApp.settings?.useRsa === 'true';
     const wheel = sdkData?.latest?.filename || 'integration_hub-1.5.0-py3-none-any.whl';
     const guide = `# ${selectedApp.name} SSO 对接清单
@@ -235,7 +848,7 @@ export default function OpenServicesPage() {
 | AppID | ${selectedApp.id} |
 | Audience (应用 code) | ${selectedApp.code} |
 | 验签模式 | ${useRsa ? 'RS256（推荐，本地验签）' : 'HS256（需调中台 validate）'} |
-| JWKS 公钥 | ${platformUrl}/api/sso/.well-known/jwks.json |
+| JWKS 公钥 | ${API_BASE}/sso/.well-known/jwks.json |
 | SDK wheel | ${wheel}（从中台"开放服务 → SDK 构建与下载"获取） |
 
 ## 二、对方需要做的 3 件事
@@ -731,7 +1344,7 @@ middleware._map_or_create_user = _map_or_create_user
                   <div className="grid gap-2 text-xs md:grid-cols-2">
                     <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
                       <span className="text-muted-foreground">中台地址</span>
-                      <code className="font-mono">{(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}</code>
+                      <code className="font-mono">{PLATFORM_ORIGIN}</code>
                     </div>
                     <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
                       <span className="text-muted-foreground">AppID</span>
@@ -750,7 +1363,7 @@ middleware._map_or_create_user = _map_or_create_user
                     <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
                       <span className="text-muted-foreground">JWKS 端点</span>
                       <code className="font-mono text-[10px]">
-                        {(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}/api/sso/.well-known/jwks.json
+                        {API_BASE}/sso/.well-known/jwks.json
                       </code>
                     </div>
                     <div className="flex items-center justify-between gap-2 rounded bg-muted/40 px-2 py-1.5">
@@ -772,7 +1385,7 @@ middleware._map_or_create_user = _map_or_create_user
                       <span className="font-medium text-foreground">5 行配置（Django settings.py）</span>
                       <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs leading-5">{`from integration_hub.sso import configure
 configure(
-    platform_url="${(process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '')}",
+    platform_url="${PLATFORM_ORIGIN}",
     audience="${selectedApp.code}",
     app_id="${selectedApp.id}",
     auto_create_user=True,
@@ -805,13 +1418,15 @@ urlpatterns += [path("sso/callback", django_sso_callback_view)]`}</pre>
           </CardContent>
         </Card>
 
-        {/* 收纳区：类型目录 / 鉴权方式 / 服务状态 / 错误码 */}
+        {/* 收纳区：类型目录 / 鉴权方式 / 服务状态 / 错误码 / 白标嵌入 */}
         <Tabs defaultValue="catalog" className="mb-6">
           <TabsList>
             <TabsTrigger value="catalog">类型目录</TabsTrigger>
             <TabsTrigger value="auth">鉴权方式</TabsTrigger>
             <TabsTrigger value="status">服务状态</TabsTrigger>
             <TabsTrigger value="errors">错误码 / Changelog</TabsTrigger>
+            <TabsTrigger value="embed">白标嵌入</TabsTrigger>
+            <TabsTrigger value="billing">账单与用量</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
             <Card>
@@ -881,6 +1496,124 @@ urlpatterns += [path("sso/callback", django_sso_callback_view)]`}</pre>
                 </p>
               </CardContent>
             </Card>
+          </TabsContent>
+          <TabsContent value="embed">
+            <div className="space-y-6">
+              {/* 白标嵌入三步 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <LayoutTemplate className="h-4 w-4 text-primary" />
+                    白标嵌入 · 两步接入
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Step 1 — 集成商后端 */}
+                  <div className="rounded-md border p-4">
+                    <div className="mb-3 flex items-center gap-3">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">1</div>
+                      <p className="text-sm font-semibold">后端生成签名 token（每次 iframe 加载）</p>
+                      <Badge variant="secondary" className="text-xs">HMAC-SHA256 · 5 分钟有效</Badge>
+                    </div>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      签名密钥由平台预置到集成商的 IntegrationClient（<code className="font-mono">embed_token</code>，48 位十六进制，与 API Key 独立）。
+                      集成商后端按下方算法生成 token，注入页面模板。
+                    </p>
+                    <EmbedAlgorithmBlock />
+                  </div>
+
+                  {/* Step 2 — 前端 iframe */}
+                  <div className="rounded-md border p-4">
+                    <div className="mb-3 flex items-center gap-3">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">2</div>
+                      <p className="text-sm font-semibold">前端 iframe 嵌入</p>
+                    </div>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      把后端生成的 token 拼到 URL 上，嵌入端点自动按 clientId 拉取白标配置（logo/公司名/主色）。
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded bg-muted p-3">
+                        <p className="mb-2 text-xs font-medium">SLA 状态卡</p>
+                        <pre className="overflow-x-auto text-[11px] leading-5 font-mono">{`<iframe
+  src="${API_BASE}/embed/sla?clientId=ic_xxx&token=1716000000.8f2a...&output=html"
+  width="360" height="180" frameborder="0"
+/>`}</pre>
+                      </div>
+                      <div className="rounded bg-muted p-3">
+                        <p className="mb-2 text-xs font-medium">用量进度条</p>
+                        <pre className="overflow-x-auto text-[11px] leading-5 font-mono">{`<iframe
+  src="${API_BASE}/embed/usage?clientId=ic_xxx&token=1716000000.8f2a...&output=html"
+  width="360" height="200" frameborder="0"
+/>`}</pre>
+                      </div>
+                    </div>
+                    <div className="mt-3 rounded border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+                      <p className="font-medium">品牌自定义（匿名）</p>
+                      <p className="mt-1">
+                        嵌入页自动调 <code className="font-mono">GET {API_BASE}/branding?clientId=ic_xxx</code> 获取 logo、公司名、主色。
+                        平台侧在集成凭证里配置（<code className="font-mono">brandingLogoUrl</code>、<code className="font-mono">companyName</code>、<code className="font-mono">primaryColor</code> 等）。
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 服务端验证规则 + 路径汇总 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    服务端验证规则 · 端点汇总
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-md border p-4">
+                    <p className="mb-2 text-sm font-medium">服务端验证规则</p>
+                    <ul className="space-y-1.5 text-xs text-muted-foreground">
+                      <li>· 用 <code className="font-mono">HMAC-SHA256</code> 重算签名，key = <code className="font-mono">client.embed_token</code></li>
+                      <li>· 用 <code className="font-mono">hmac.compare_digest</code> constant-time 比较，防时序攻击</li>
+                      <li>· 时间戳与服务端相差 ≤ <code className="font-mono">300</code> 秒（5 分钟）</li>
+                      <li>· embed_token 泄露或轮换后，旧 token 立即全部失效</li>
+                    </ul>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="py-2 font-medium">方法</th>
+                          <th className="py-2 font-medium">路径</th>
+                          <th className="py-2 font-medium">鉴权</th>
+                          <th className="py-2 font-medium">说明</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          ['POST', '/api/embed/token', 'API Key', '重置 embed_token + 返回示例签名'],
+                          ['GET', '/api/branding', '匿名', '白标配置（logo / 公司名 / 颜色）'],
+                          ['GET', '/api/status', '匿名', '平台 / Client SLA 状态'],
+                          ['GET', '/api/embed/sla', 'EmbedToken', '嵌入页 SLA 卡片'],
+                          ['GET', '/api/embed/usage', 'EmbedToken', '嵌入页用量进度条'],
+                        ].map(([method, path, auth, desc]) => (
+                          <tr key={path} className="border-b last:border-0">
+                            <td className="py-2 font-mono">
+                              <Badge variant={method === 'GET' ? 'outline' : 'default'} className="text-[10px]">{method}</Badge>
+                            </td>
+                            <td className="py-2 font-mono">{path}</td>
+                            <td className="py-2">
+                              <Badge variant={auth === '匿名' ? 'secondary' : 'outline'} className="text-[10px]">{auth}</Badge>
+                            </td>
+                            <td className="py-2 text-muted-foreground">{desc}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+          <TabsContent value="billing">
+            <BillingTab isPlatform={isPlatform} canManage={canManage} />
           </TabsContent>
         </Tabs>
 

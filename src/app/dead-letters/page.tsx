@@ -169,6 +169,7 @@ export default function DeadLettersPage() {
 
   const [resolvePayload, setResolvePayload] = useState('');
   const [resolveWinner, setResolveWinner] = useState<'source' | 'target'>('source');
+  const [resolveExecute, setResolveExecute] = useState(true);
   const [targetRecord, setTargetRecord] = useState<any>(null);
 
   const viewDetail = async (item: any) => {
@@ -198,8 +199,16 @@ export default function DeadLettersPage() {
     }
     setActionLoading(true);
     try {
-      await deadLettersApi.resolve(detail.id, { payload, winner: resolveWinner, execute: true });
-      toast.success(resolveWinner === 'target' ? '已按目标记录写入' : '已按编辑后的源记录写入');
+      const result = await deadLettersApi.resolve(detail.id, {
+        payload,
+        winner: resolveWinner,
+        execute: resolveExecute,
+      });
+      if (!resolveExecute) {
+        toast.success('预览完成（未落库）：' + (result?.dropedMaskedFields ? `已剥离 ${result.dropedMaskedFields.length} 个掩码字段` : '无掩码残留'));
+      } else {
+        toast.success(resolveWinner === 'target' ? '已按目标记录写入' : '已按编辑后的源记录写入');
+      }
       setDetailId(null);
       loadDeadLetters();
     } catch (error) {
@@ -227,7 +236,7 @@ export default function DeadLettersPage() {
             <h1 className="text-2xl font-semibold tracking-tight">死信队列</h1>
             <p className="text-sm text-muted-foreground">失败数据可改字段后按源或目标写入，也可重处理整批。</p>
           </div>
-          <Button variant="outline" onClick={loadDeadLetters} disabled={loading}>
+          <Button variant="outline" onClick={() => loadDeadLetters()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             刷新
           </Button>
@@ -571,6 +580,17 @@ export default function DeadLettersPage() {
                         <input type="radio" name="winner" checked={resolveWinner === 'target'} onChange={() => setResolveWinner('target')} disabled={!targetRecord} />
                         保留目标已有记录
                       </label>
+                    </div>
+                  )}
+                  {detail.status === 'pending' && canRetry && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        id="resolveExecute"
+                        checked={resolveExecute}
+                        onChange={(e) => setResolveExecute(e.target.checked)}
+                      />
+                      <label htmlFor="resolveExecute">立即落库执行（取消勾选为预览，只检查掩码剥离）</label>
                     </div>
                   )}
                 </TabsContent>

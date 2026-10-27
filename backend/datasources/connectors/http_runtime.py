@@ -130,11 +130,12 @@ def load_row(config: dict, job_cfg: dict, row: dict, *, method: str | None = Non
     if not target:
         raise RuntimeError("HTTP 目标缺少 URL")
     verb = (method or job_cfg.get("method") or config.get("method") or "POST").upper()
-    body = json.dumps(row, ensure_ascii=False, default=str).encode("utf-8")
+    # DELETE 有些网关（Nginx 默认）不接受 body，稳妥不传。
+    body = None if verb == "DELETE" else json.dumps(row, ensure_ascii=False, default=str).encode("utf-8")
     http_request(
         target,
         method=verb,
-        headers=api_headers(config, json_body=True),
+        headers=api_headers(config, json_body=(body is not None)),
         body=body,
         timeout=_timeout(config),
     )

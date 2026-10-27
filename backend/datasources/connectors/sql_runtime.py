@@ -212,7 +212,9 @@ def extract(ds_type: str, config: dict, job_cfg: dict) -> list[dict]:
     params: list[Any] = []
     clauses: list[str] = []
     if incremental and watermark_value not in (None, ""):
-        clauses.append(f"{quote_ident(watermark_field, dialect)} > %s")
+        # 用 >= 而非 >：边界行（上次水位线值）Load 失败时，下次还能拉到，不会静默丢行。
+        # 配合 upsert / match_keys 幂等处理重复。
+        clauses.append(f"{quote_ident(watermark_field, dialect)} >= %s")
         params.append(watermark_value)
     filter_sql = _filter_sql(job_cfg.get("filter_condition"), dialect)
     if filter_sql:
@@ -289,6 +291,24 @@ def update_row(ds_type: str, config: dict, job_cfg: dict, row: dict, match_keys:
     where_sql = " AND ".join(f"{quote_ident(k, dialect)} = %s" for k in match_keys)
     params = [row[c] for c in set_cols] + [row[k] for k in match_keys]
     sql = f"UPDATE {qtable} SET {set_sql} WHERE {where_sql}"
+    sql, params = _bind(sql, dialect, params)
+    with connect(ds_type, config) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.rowcount or 0
+
+
+def delete_row(ds_type: str, config: dict, job_cfg: dict, row: dict, match_keys: list[str]) -> int:
+    """按 match_keys 真删；match_keys 为空时安全回退用整行键，避免误删全表。"""
+    dialect = dialect_of(ds_type)
+    table = _table_name(config, job_cfg)
+    if not table:
+        raise RuntimeError("请在任务目标配置中填写表名（targetConfig.table）")
+    if not match_keys:
+        raise RuntimeError("delete 操作必须配置 matchKeys 以防误删全表")
+    where_sql = " AND ".join(f"{quote_ident(k, dialect)} = %s" for k in match_keys)
+    params = [row.get(k) for k in match_keys]
+    sql = f"DELETE FROM {quote_ident(table, dialect)} WHERE {where_sql}"
     sql, params = _bind(sql, dialect, params)
     with connect(ds_type, config) as conn:
         with conn.cursor() as cur:
